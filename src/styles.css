@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+
+/* ─── Premium Dark Theme (Canva / TikTok / CapCut inspired) ─── */
+@theme {
+  --color-bg: #0b0c17;
+  --color-bg-soft: #10111d;
+  --color-panel: #131424;
+  --color-panel-2: #161728;
+  --color-panel-3: #1c1d30;
+  --color-border: #262a45;
+  --color-border-hover: #3a3f66;
+  --color-text: #f3f5ff;
+  --color-text-muted: #6c6f9b;
+  --color-accent: #a371f7;
+  --color-accent-2: #22d3ee;
+  --color-accent-3: #22c55e;
+  --color-danger: #f43f5e;
+  --color-warning: #fbbf24;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-body);
+}
+
+/* ─── Glass system ─── */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.glass-strong {
+  background: rgba(23, 25, 45, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ─── CTA gradients ─── */
+.brand-gradient {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-3));
+}
+.brand-gradient-2 {
+  background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));
+}
+.brand-gradient-3 {
+  background: linear-gradient(135deg, #a371f7, #ec4899, #f472b6);
+}
+
+/* ─── Text like Canva ─── */
+h1, h2, h3, h4 { font-family: var(--font-display); }
+
+/* ─── Smooth entrance animations ─── */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes pulse-subtle { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+@keyframes shimmer { to { background-position: 200% 0; } }
+
+.animate-fade-in { animation: fade-in 0.25s ease; }
+.animate-slide-up { animation: slide-up 0.3s ease; }
+.animate-slide-in { animation: slide-in 0.2s ease; }
+.animate-pulse-subtle { animation: pulse-subtle 3s ease-in-out infinite; }
+.shimmer {
+  background-size: 200% auto;
+  animation: shimmer 8s ease-infinite;
+}
+
+/* ─── Selection */
+::selection { background: rgba(163, 113, 247, 0.45); }
+
+/* ─── Scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0e1022; }
+::-webkit-scrollbar-thumb { background: #36395d; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #50517c; }
+
+/* ─── Timeline (CapCut-style ruler + track) ─── */
+.timeline-track-grid {
+  background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px);
+}
+
+/* ─── Hero / landing blocks ─── */
+.hero-glow {
+  background: radial-gradient(ellipse 100% 60% at 50% 0%, rgba(163, 113, 247, 0.22), transparent 55%);
+}
+.hero-glow-bottom {
+  background: radial-gradient(ellipse 80% 50% at 50% 100%, rgba(34, 211, 238, 0.15), transparent 60%);
+}
