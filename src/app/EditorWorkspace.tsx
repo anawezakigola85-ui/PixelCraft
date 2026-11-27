@@ -195,6 +195,7 @@ export default function EditorWorkspace() {
   const playing = useEditor((s) => s.playing)
   const time = useEditor((s) => s.time)
   const volume = useEditor((s) => s.volume)
+  const playbackRate = useEditor((s) => s.playbackRate)
   const selectedClipId = useEditor((s) => s.selectedClipId)
   const selectedElementId = useEditor((s) => s.selectedElementId)
   const zoom = useEditor((s) => s.timelineZoom)
@@ -225,6 +226,7 @@ export default function EditorWorkspace() {
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const dragRef = useRef<{ id: string; startX: number; originalStart: number } | null>(null)
 
@@ -248,6 +250,7 @@ export default function EditorWorkspace() {
   }, [clips])
 
   const playheadClip = clips.find((c) => time >= c.start && time < c.start + c.duration)
+  const activeAudioClip = clips.find((c) => c.trackId === 'track-audio' && c.src && time >= c.start && time < c.start + c.duration)
   const previewClip = playheadClip?.src && !playheadClip.src.startsWith('data:image/svg+xml') ? playheadClip : undefined
   const selectedClip = clips.find((c) => c.id === selectedClipId)
   const selectedElement = elements.find((e) => e.id === selectedElementId)
@@ -283,19 +286,51 @@ export default function EditorWorkspace() {
     setMedia(uploads)
   }, [session?.userId])
 
-  useEffect(() => { void useProjects.getState().loadProjects() }, [])
+  // The inspector persists through updateCurrent(), which no-ops without a
+  // current project. Opening /workspace directly must therefore create or
+  // open one, otherwise every right-hand control would silently do nothing.
+  const ensureProject = useCallback(async (): Promise<Project> => {
+    if (useProjects.getState().current) return useProjects.getState().current as Project
+    if (!useProjects.getState().projects.length) await useProjects.getState().loadProjects()
+    const all = useProjects.getState().projects
+    if (all.length) {
+      const newest = [...all].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      await useProjects.getState().openProject(newest.id)
+      const opened = useProjects.getState().current
+      if (opened) return opened
+    }
+    return await useProjects.getState().createProject('Studio Project', 'video', '9:16')
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      await useProjects.getState().loadProjects()
+      if (alive) await ensureProject()
+    })()
+    return () => { alive = false }
+  }, [ensureProject])
   useEffect(() => { void refreshMedia() }, [refreshMedia])
 
+  const initializedProjectId = useRef<string | null>(null)
   useEffect(() => {
     if (!project) return
     const ed = useEditor.getState()
     if (ed.selectedProjectId !== project.id) {
       useEditor.setState({ selectedProjectId: project.id, elements: project.elements, clips: project.clips })
     }
-    setAspect(project.aspectRatio)
-    if (project.brand?.colors?.length) setBrandColors(project.brand.colors)
-    if (project.brand?.font) setBrandFont(project.brand.font)
-    setColor(project.brand?.colors?.[0] || C.purple)
+    if (initializedProjectId.current !== project.id) {
+      initializedProjectId.current = project.id
+      setAspect(project.aspectRatio)
+      if (project.brand?.colors?.length) setBrandColors(project.brand.colors)
+      if (project.brand?.font) setBrandFont(project.brand.font)
+      setColor(project.brand?.colors?.[0] || C.purple)
+      // Select a real layer so Position/Transform/Text controls are live.
+      if (!useEditor.getState().selectedElementId && project.elements.length) {
+        const first = project.elements.find((e) => e.type === 'text') || project.elements[0]
+        useEditor.setState({ selectedElementId: first.id })
+      }
+    }
   }, [project])
 
   useEffect(() => {
@@ -322,11 +357,30 @@ export default function EditorWorkspace() {
   useEffect(() => {
     const v = videoRef.current
     if (!v || !previewClip?.src) return
+    v.volume = volume
+    v.playbackRate = playbackRate
     const local = Math.max(0, time - previewClip.start)
     if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local
     if (playing) void v.play().catch(() => {})
     else v.pause()
-  }, [time, playing, previewClip?.id, previewClip?.start, previewClip?.src])
+  }, [time, playing, volume, playbackRate, previewClip?.id, previewClip?.start, previewClip?.src])
+
+  // Real audio playback with fade in/out from the Audio inspector.
+  useEffect(() => {
+    const a = audioRef.current
+    if (!a || !activeAudioClip?.src) return
+    const local = Math.max(0, time - activeAudioClip.start)
+    if (Math.abs(a.currentTime - local) > 0.3) a.currentTime = local
+    const fadeIn = Number(activeAudioClip.params?.fadeIn || 0)
+    const fadeOut = Number(activeAudioClip.params?.fadeOut || 0)
+    let gain = volume
+    if (fadeIn > 0) gain *= Math.min(1, local / fadeIn)
+    if (fadeOut > 0) gain *= Math.min(1, Math.max(0, (activeAudioClip.duration - local) / fadeOut))
+    a.volume = Math.min(1, Math.max(0, gain))
+    a.playbackRate = playbackRate
+    if (playing) void a.play().catch(() => {})
+    else a.pause()
+  }, [time, playing, volume, playbackRate, activeAudioClip?.id, activeAudioClip?.src, activeAudioClip?.start, activeAudioClip?.duration, activeAudioClip?.params?.fadeIn, activeAudioClip?.params?.fadeOut])
 
   const persistEditor = useCallback((extra: Partial<Project> = {}) => {
     const p = useProjects.getState().current
@@ -365,12 +419,6 @@ export default function EditorWorkspace() {
     setFuture((f) => f.slice(1))
     persistClips(next)
     setStatus('Redid edit')
-  }
-
-  const ensureProject = async (): Promise<Project> => {
-    const existing = useProjects.getState().current
-    if (existing) return existing
-    return await useProjects.getState().createProject('Studio Project', 'video', aspect)
   }
 
   const addAsset = async (asset: Asset) => {
@@ -875,6 +923,7 @@ export default function EditorWorkspace() {
                   <video ref={videoRef} src={previewClip.src} className="absolute inset-0 h-full w-full object-cover" muted={volume === 0} playsInline />
                 )
               )}
+              {activeAudioClip?.src && <audio ref={audioRef} src={activeAudioClip.src} preload="auto" />}
               <DesignPreview
                 design={previewDesign}
                 transparent={!!previewClip}
