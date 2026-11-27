@@ -66,7 +66,9 @@ Without OAuth values the provider buttons show a disabled state.
 2. Render → **New Web Service** → connect the repo.
 3. **Root Directory:** `PixelCraft` (if the repo root contains that folder).
 4. **Runtime:** Node 20+.
-5. **Build Command:** `npm install`
+5. **Build Command:** `echo "backend needs no build"` — the backend has zero npm
+   dependencies, so a full `npm install` only wastes build minutes on the free plan.
+   (`npm install` also works, just much slower.)
 6. **Start Command:** `npm run start:server` (equivalent to `node backend/index.js`).
 7. **Health Check Path:** `/health`.
 8. Add the backend variables from the table above under **Environment**. Set

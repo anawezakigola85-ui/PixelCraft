@@ -27,7 +27,9 @@ export function newProject(
   aspectRatio: AspectRatio = '16:9',
   ownerId?: string,
 ): Project {
-  const size = CANVAS_BY_TYPE[type]
+  // Aspect ratio wins when supplied, so templates and new-project dialogs get
+  // the exact canvas they asked for instead of a fixed per-type size.
+  const size = ASPECT_RATIOS[aspectRatio] || CANVAS_BY_TYPE[type]
   const id = v4()
   const now = Date.now()
   return {

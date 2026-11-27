@@ -10,6 +10,9 @@ import { useProjects } from '../store/projectsStore'
 import { useUI } from '../store/ui'
 import { useAuth } from '../store/authStore'
 import { ProjectCard } from './ProjectCard'
+import DesignPreview from '../components/ui/DesignPreview'
+import { TEMPLATES } from '../data/templates'
+import { applyTemplate } from '../lib/templates'
 import { getAllMedia } from '../lib/projects'
 import type { Project, ProjectType, AspectRatio } from '../lib/types'
 
@@ -160,11 +163,44 @@ export default function Dashboard() {
           </Button>
         </section>
 
+        {/* Start from a real template */}
+        <section className="animate-slide-up" style={{ animationDelay: '0.05s' }}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display text-2xl font-semibold">Start from a template</h2>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">Click any design to open a fully editable copy.</p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/templates')}>
+              View all {TEMPLATES.length} →
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {TEMPLATES.slice(0, 3).map((tp) => (
+              <button
+                key={tp.id}
+                onClick={() => void applyTemplate(tp)}
+                className="group glass rounded-2xl overflow-hidden text-left hover:border-[var(--color-accent-3)] hover:translate-y-[-2px] transition-all"
+              >
+                <div className="relative h-40 bg-[#090A0F]">
+                  <DesignPreview design={tp} className="absolute inset-0 h-full w-full" />
+                  <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-3 py-1 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+                    Use →
+                  </span>
+                </div>
+                <div className="p-3 border-t border-[var(--color-border)]">
+                  <p className="text-sm font-medium truncate">{tp.name}</p>
+                  <p className="text-[10px] text-[var(--color-text-muted)] truncate">{tp.style} · {tp.aspectRatio}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
         {/* Recent Projects */}
         <section className="animate-slide-up" style={{ animationDelay: '0.1s' }}>
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-2xl font-semibold">Recent Projects</h2>
-            <button className="text-sm text-[var(--color-accent-2)]">Browse all ↩</button>
+            <button className="text-sm text-[var(--color-accent-2)]" onClick={() => navigate('/templates')}>Browse templates ↩</button>
           </div>
           {recent.length === 0 && (
             <p className="text-[var(--color-text-muted)] text-sm">

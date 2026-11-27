@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Search, Filter, Star, LayoutGrid, Sparkles } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
+import DesignPreview from '../components/ui/DesignPreview'
 import { TEMPLATES } from '../data/templates'
 import { applyTemplate } from '../lib/templates'
 import { useUI } from '../store/ui'
@@ -20,56 +21,49 @@ const CATEGORIES = [
 export default function TemplateLibrary() {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('All')
+  const [showAllCategories, setShowAllCategories] = useState(false)
   const [featured] = useState(() => TEMPLATES.slice(0, 4))
   const langVal = useSettings((s) => s.language) as Language
   const { setSearchQuery } = useUI()
 
-  useEffect(() => setSearchQuery(''), [])
+  useEffect(() => setSearchQuery(''), [setSearchQuery])
 
   const filtered = useMemo(
     () =>
       TEMPLATES.filter((tp) => {
         const catOk = category === 'All' || tp.category.toLowerCase() === category.toLowerCase()
         const s = search.trim().toLowerCase()
-        const nameOk = tp.name.toLowerCase().includes(s) || tp.style.toLowerCase().includes(s)
+        const nameOk =
+          tp.name.toLowerCase().includes(s) ||
+          tp.style.toLowerCase().includes(s) ||
+          tp.category.toLowerCase().includes(s) ||
+          tp.elements.some((el) => (el.text || '').toLowerCase().includes(s))
         return catOk && (s ? nameOk : true)
       }),
     [search, category],
   )
 
-  const preview = (tp: Template) => (
-    <div className="space-y-2" style={{ height: 110 }}>
-      {tp.layoutPreview?.textLines?.slice(0, 2).map((l: string, i: number) => (
-        <p key={i} className={cn('text-[8px] font-mono truncate leading-none', i === 0 ? 'text-white font-semibold' : 'text-[var(--color-text)] opacity-60')}>
-          {l}
-        </p>
-      ))}
-    </div>
-  )
+  const visibleCategories = showAllCategories ? CATEGORIES : CATEGORIES.slice(0, 8)
 
   const Tile = ({ tp, hero = false }: { tp: Template; hero?: boolean }) => (
     <button
       className={cn(
-        'group glass rounded-2xl p-0 text-left hover:border-[var(--color-accent-3)] hover:translate-y-[-3px] transition-all',
+        'group glass rounded-2xl p-0 text-left hover:border-[var(--color-accent-3)] hover:translate-y-[-3px] transition-all overflow-hidden',
         hero && 'md:col-span-2 lg:col-span-2',
       )}
-      onClick={() => applyTemplate(tp)}
+      onClick={() => void applyTemplate(tp)}
+      title={`Open "${tp.name}" in the editor`}
     >
-      <div
-        className="relative h-44 bg-gradient-to-br from-white/5 to-[var(--color-panel-2)] flex items-center justify-center gap-2 p-2 group-hover:shadow-xl transition"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 8 }}
-      >
-        <div className="flex gap-2 shrink-0">
-          {tp.layoutPreview?.colors.slice(0, 3).map((c, i) => (
-            <div key={i} className="w-7 h-7 rounded-lg -skew-x-[-10deg] border border-[var(--color-border)]" style={{ background: c }} />
-          ))}
-        </div>
-        <div className="flex-1 min-w-0">{preview(tp)}</div>
+      <div className="relative h-44 bg-[#090A0F]">
+        <DesignPreview design={tp} className="absolute inset-0 h-full w-full" />
+        <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-3 py-1 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+          Use template →
+        </span>
       </div>
       <div className="p-3 border-t border-[var(--color-border)]">
         <p className="text-sm font-medium truncate">{tp.name}</p>
         <p className="text-[10px] text-[var(--color-text-muted)] truncate">
-          {tp.style} · {tp.aspectRatio}
+          {tp.style} · {tp.aspectRatio} · {tp.elements.filter((el) => el.type === 'text').length} text layers
         </p>
       </div>
     </button>
@@ -102,10 +96,10 @@ export default function TemplateLibrary() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
               <Filter className="h-4 w-4" />
-              <span>{filtered.length} templates</span>
+              <span>{filtered.length} ready-to-edit templates</span>
             </div>
             <div className="flex flex-wrap gap-2">
-              {CATEGORIES.slice(0, 8).map((c) => (
+              {visibleCategories.map((c) => (
                 <Button
                   key={c}
                   variant={category === c ? 'accent' : 'secondary'}
@@ -116,28 +110,47 @@ export default function TemplateLibrary() {
                   {c}
                 </Button>
               ))}
-              <Button variant="secondary" size="sm" className="text-xs">
-                + more
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-xs"
+                onClick={() => setShowAllCategories((v) => !v)}
+              >
+                {showAllCategories ? '− less' : '+ more'}
               </Button>
             </div>
           </div>
 
-          {category === 'All' && search === '' && (
+          {category === 'All' && search === '' && featured[0] && featured[1] && (
             <div className="grid md:grid-cols-2 gap-3 mb-10">
-              <div className="glass rounded-2xl p-4 cursor-pointer hover:border-[var(--color-accent-3)] transition-all" onClick={() => applyTemplate(featured[0])}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Star className="h-4 w-4 text-[var(--color-warning)]" />
-                  <h3 className="font-display font-semibold">Featured — {featured[0]?.name}</h3>
+              <button
+                className="glass rounded-2xl p-3 flex gap-4 text-left cursor-pointer hover:border-[var(--color-accent-3)] transition-all"
+                onClick={() => void applyTemplate(featured[0])}
+              >
+                <DesignPreview design={featured[0]} className="h-24 w-24 shrink-0 rounded-xl" />
+                <div className="min-w-0 py-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Star className="h-4 w-4 text-[var(--color-warning)]" />
+                    <h3 className="font-display font-semibold truncate">Featured — {featured[0].name}</h3>
+                  </div>
+                  <p className="text-sm text-[var(--color-text-muted)]">{featured[0].style}</p>
+                  <p className="text-[10px] text-[var(--color-accent-2)] mt-2">Click to open in editor →</p>
                 </div>
-                <p className="text-sm text-[var(--color-text-muted)]">{featured[0]?.style}</p>
-              </div>
-              <div className="glass rounded-2xl p-4 cursor-pointer hover:border-[var(--color-accent-3)] transition-all" onClick={() => applyTemplate(featured[1])}>
-                <div className="flex items-center gap-2 mb-2">
-                  <LayoutGrid className="h-4 w-4 text-[var(--color-accent-2)]" />
-                  <h3 className="font-display font-semibold">Recommended — {featured[1]?.name}</h3>
+              </button>
+              <button
+                className="glass rounded-2xl p-3 flex gap-4 text-left cursor-pointer hover:border-[var(--color-accent-3)] transition-all"
+                onClick={() => void applyTemplate(featured[1])}
+              >
+                <DesignPreview design={featured[1]} className="h-24 w-24 shrink-0 rounded-xl" />
+                <div className="min-w-0 py-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <LayoutGrid className="h-4 w-4 text-[var(--color-accent-2)]" />
+                    <h3 className="font-display font-semibold truncate">Recommended — {featured[1].name}</h3>
+                  </div>
+                  <p className="text-sm text-[var(--color-text-muted)]">{featured[1].style}</p>
+                  <p className="text-[10px] text-[var(--color-accent-2)] mt-2">Click to open in editor →</p>
                 </div>
-                <p className="text-sm text-[var(--color-text-muted)]">{featured[1]?.style}</p>
-              </div>
+              </button>
             </div>
           )}
 
@@ -147,7 +160,10 @@ export default function TemplateLibrary() {
             ))}
           </div>
           {filtered.length === 0 && (
-            <div className="text-center py-16 text-[var(--color-text-muted)] flex justify-center"><Sparkles className="h-6 w-6" /></div>
+            <div className="text-center py-16 text-[var(--color-text-muted)] flex flex-col items-center gap-3">
+              <Sparkles className="h-6 w-6" />
+              <p className="text-sm">No template matches that search. Try another word or category.</p>
+            </div>
           )}
         </section>
       </main>

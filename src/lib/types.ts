@@ -125,8 +125,30 @@ export interface Template {
   category: string
   style: string
   aspectRatio: AspectRatio
-  /** Element definitions used when a template is applied. */
-  elements: Array<Pick<ProjectElement, 'type' | 'text' | 'x' | 'y' | 'width' | 'height' | 'color' | 'fill' | 'fontSize' | 'fontWeight'>>
-  /** Original layout concept, used for the library preview card. */
+  /** Canvas background painted before the elements. */
+  background?: string
+  /** Complete, editable element definitions used when a template is applied. */
+  elements: Array<
+    Pick<
+      ProjectElement,
+      | 'type'
+      | 'text'
+      | 'x'
+      | 'y'
+      | 'width'
+      | 'height'
+      | 'color'
+      | 'fill'
+      | 'fontSize'
+      | 'fontWeight'
+      | 'fontFamily'
+      | 'textAlign'
+      | 'opacity'
+      | 'cornerRadius'
+      | 'params'
+      | 'z'
+    >
+  >
+  /** Palette and original lines, kept for fast gallery previews and search. */
   layoutPreview?: { colors: string[]; shapeCount: number; textLines: string[] }
 }
