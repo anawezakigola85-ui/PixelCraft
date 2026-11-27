@@ -83,11 +83,40 @@ export default function SettingsPage() {
               placeholder="gpt-4o-mini"
               className="mt-1 w-64 h-10"
             />
-            <label className="text-xs text-[var(--color-text-muted)]">Informational API Key (real key lives in backend/.env)</label>
-            <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="Configure via backend/.env" className="mt-1 w-64 h-10" />
+            <label className="text-xs text-[var(--color-text-muted)]">Local note only — the real key is NOT entered here</label>
+            <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="Optional note, e.g. 'key added in Render'" className="mt-1 w-64 h-10" />
             <Button onClick={save} disabled={!key && !model} className="mt-2 brand-gradient text-black">
               Save AI Settings
             </Button>
+
+            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs text-[var(--color-text-muted)] space-y-2">
+              <p className="font-semibold text-[var(--color-text)]">How to enable AI (3 steps)</p>
+              <ol className="list-decimal pl-5 space-y-1.5">
+                <li>
+                  Create your key at{' '}
+                  <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">platform.openai.com/api-keys</a>
+                  {' '}→ <b>Login</b> → <b>Create new secret key</b> → copy it (starts with <code>sk-</code>).
+                </li>
+                <li>
+                  Add a payment method at{' '}
+                  <a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">OpenAI Billing</a>
+                  {' '}(image generation is paid; chat is very cheap).
+                </li>
+                <li>
+                  Go to{' '}
+                  <a href="https://dashboard.render.com" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">Render Dashboard</a>
+                  {' '}→ service <b>pixelcraft-ehto</b> → <b>Environment</b> → <b>Add Environment Variable</b>.
+                  Set key <code>OPENAI_API_KEY</code> and value = your copied key → <b>Save Changes</b>. Wait for deploy.
+                </li>
+              </ol>
+              <p>
+                Test:{' '}
+                <a href="https://pixelcraft-ehto.onrender.com/health" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">Backend health</a>
+                {' '}·{' '}
+                <a href="https://pixel-craft-blue.vercel.app/ai" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">AI Studio</a>
+                . Never paste the key into this browser field — it stays on Render only.
+              </p>
+            </div>
           </div>
         </section>
 
