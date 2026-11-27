@@ -5,6 +5,7 @@ import { Input } from '../components/ui/Input'
 import DesignPreview from '../components/ui/DesignPreview'
 import { TEMPLATES } from '../data/templates'
 import { applyTemplate } from '../lib/templates'
+import { useLocation } from './Router'
 import { useUI } from '../store/ui'
 import { useSettings } from '../store/settings'
 import type { Language } from '../lib/i18n'
@@ -19,14 +20,22 @@ const CATEGORIES = [
 ]
 
 export default function TemplateLibrary() {
+  const location = useLocation()
   const [search, setSearch] = useState('')
-  const [category, setCategory] = useState('All')
+  const [category, setCategory] = useState(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('category') || 'All'
+    return CATEGORIES.includes(fromUrl) ? fromUrl : 'All'
+  })
   const [showAllCategories, setShowAllCategories] = useState(false)
   const [featured] = useState(() => TEMPLATES.slice(0, 4))
   const langVal = useSettings((s) => s.language) as Language
   const { setSearchQuery } = useUI()
 
   useEffect(() => setSearchQuery(''), [setSearchQuery])
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('category')
+    if (fromUrl) setCategory(CATEGORIES.includes(fromUrl) ? fromUrl : 'All')
+  }, [location])
 
   const filtered = useMemo(
     () =>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Sparkles, Monitor, LayoutGrid, Download } from 'lucide-react'
+import { Plus, Search, Sparkles, Monitor, LayoutGrid, Download, Wand2 } from 'lucide-react'
 import Logo from '../components/ui/Logo'
 import LogoBackdrop from '../components/ui/LogoBackdrop'
 import { Button } from '../components/ui/Button'
@@ -131,6 +131,10 @@ export default function Dashboard() {
               <Button variant="outline" onClick={() => navigate('/templates')}>
                 Browse Templates
               </Button>
+              <Button variant="outline" onClick={() => navigate('/tools')}>
+                <Wand2 className="h-4 w-4" />
+                Tools
+              </Button>
               <Button variant="outline" onClick={() => navigate('/ai')}>
                 <Sparkles className="h-4 w-4" />
                 AI Image
@@ -146,6 +150,9 @@ export default function Dashboard() {
         <section className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => navigate('/templates')}>
             Template Library
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/tools')}>
+            CapCut-style Tools
           </Button>
           <Button variant="secondary" onClick={() => navigate('/ai')}>
             AI Image Generator

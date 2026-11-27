@@ -12,6 +12,7 @@ import AccountPage from './AccountPage'
 import LoginPage from './LoginPage'
 import OAuthCallback from './OAuthCallback'
 import EditorWorkspace from './EditorWorkspace'
+import ToolsHub from './ToolsHub'
 
 function Loading() {
   return (
@@ -47,6 +48,7 @@ export default function App() {
   else if (location.startsWith('/editor/')) page = <Editor />
   else if (location.startsWith('/settings')) page = <SettingsPage />
   else if (location.startsWith('/templates')) page = <TemplateLibrary />
+  else if (location.startsWith('/tools')) page = <ToolsHub />
   else if (location.startsWith('/ai')) page = <AIImageGen />
   else page = <Dashboard />
 

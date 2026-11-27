@@ -8,7 +8,7 @@ import { navigate } from './Router'
 const PANELS = ['templates', 'media', 'text', 'elements', 'ai'] as const
 
 const labels: Record<string, { label: string; color: string; hint: string }> = {
-  templates: { label: 'Templates', color: '#f59e0b', hint: 'Browse the library in Phase 4' },
+  templates: { label: 'Templates', color: '#f59e0b', hint: 'Browse the editable template library' },
   media: { label: 'Media', color: '#a371f7', hint: 'Upload video/image/audio files' },
   text: { label: 'Text', color: '#22d3ee', hint: 'Add text to the canvas' },
   elements: { label: 'Elements', color: '#8b5cf6', hint: 'Shapes, lines, stickers' },
@@ -55,7 +55,7 @@ export default function LeftSidebar() {
               <Monitor className="h-8 w-8 mb-2" />
               <span className="text-xs">Browse templates</span>
             </button>
-            <p className="text-[10px] text-[var(--color-text-muted)]">Template library (Phase 4) — 30+ editable designs.</p>
+            <p className="text-[10px] text-[var(--color-text-muted)]">132 real editable designs, including TikTok, Canva and CapCut packs.</p>
           </div>
         )}
         {active === 'media' && (
@@ -88,6 +88,9 @@ export default function LeftSidebar() {
             </button>
             <button className="w-full text-xs rounded px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" onClick={() => navigate('/ai')}>
               AI Image Generator ↗
+            </button>
+            <button className="w-full text-xs rounded px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" onClick={() => navigate('/tools')}>
+              All Tools (trim, resize, captions…) ↗
             </button>
           </div>
         )}
