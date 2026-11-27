@@ -233,7 +233,7 @@ export default function EditorWorkspace() {
       id: `tpl-${tp.id}`,
       name: tp.name,
       kind: 'template',
-      label: 'TEMPLATE',
+      label: tp.category === 'TikTok' ? 'TIKTOK' : tp.category.toUpperCase().slice(0, 8),
       template: tp,
       thumbnail: designToDataUrl(tp),
     })),
@@ -569,7 +569,18 @@ export default function EditorWorkspace() {
     brand: [],
   }), [media, templateAssets])
 
-  const visibleAssets = assetsByPanel[rail].filter((a) => a.name.toLowerCase().includes(query.toLowerCase()))
+  const visibleAssets = assetsByPanel[rail].filter((a) => {
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    const haystack = [
+      a.name,
+      a.label,
+      a.template?.category,
+      a.template?.style,
+      ...(a.template?.elements.map((el) => el.text || '') || []),
+    ].join(' ').toLowerCase()
+    return haystack.includes(q)
+  })
 
   const runExport = async () => {
     const p = useProjects.getState().current
