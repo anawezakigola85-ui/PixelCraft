@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Sparkles, Monitor, LayoutGrid, Download, Wand2 } from 'lucide-react'
+import {
+  Plus, Search, Sparkles, Monitor, LayoutGrid, Download, Wand2,
+  Home, Film, Layers, Image as ImageIcon, Megaphone, Scissors,
+  Clapperboard, Gauge, Mic, Eraser, Video,
+} from 'lucide-react'
 import Logo from '../components/ui/Logo'
 import LogoBackdrop from '../components/ui/LogoBackdrop'
 import { Button } from '../components/ui/Button'
@@ -24,6 +28,33 @@ const NEW_PROJECT_OPTIONS: Array<{ type: ProjectType; label: string; icon: typeo
 ]
 
 const ASPECT_OPTIONS: AspectRatio[] = ['16:9', '9:16', '1:1', '4:5']
+
+const NAV: Array<{ label: string; icon: typeof Home; path?: string; action?: 'new' }> = [
+  { label: 'Home', icon: Home, path: '/' },
+  { label: 'Templates', icon: LayoutGrid, path: '/templates' },
+  { label: 'Create with AI', icon: Sparkles, path: '/ai' },
+  { label: 'Video Studio', icon: Film, path: '/workspace' },
+  { label: 'Design Studio', icon: Monitor, action: 'new' },
+  { label: 'More tools', icon: Layers, path: '/tools' },
+]
+
+const AI_CARDS: Array<{
+  title: string
+  desc: string
+  icon: typeof Sparkles
+  path: string
+  color: string
+}> = [
+  { title: 'AI video', desc: 'Set ideas into motion', icon: Video, path: '/tools?tab=video', color: '#8b5cf6' },
+  { title: 'GPT Image 2', desc: 'Turn ideas into imagery', icon: ImageIcon, path: '/ai', color: '#22d3ee' },
+  { title: 'AI ad maker', desc: 'Create winning ads, scale fast with variants', icon: Megaphone, path: '/templates?category=Business', color: '#f59e0b' },
+  { title: 'Extend video', desc: 'Seamlessly extend any clip', icon: Scissors, path: '/tools?tab=video', color: '#ec4899' },
+  { title: 'AI edit', desc: 'Edit clips by describing it', icon: Clapperboard, path: '/workspace', color: '#a371f7' },
+  { title: 'Long video to shorts', desc: 'Turn long videos into polished shorts', icon: Film, path: '/tools?tab=video', color: '#14b8a6' },
+  { title: 'Enhance quality', desc: 'Get sharper results instantly', icon: Gauge, path: '/tools?tab=video', color: '#3b82f6' },
+  { title: 'Text to speech', desc: 'Convert text to speech in various languages', icon: Mic, path: '/tools?tab=audio', color: '#f97316' },
+  { title: 'AI remove', desc: 'Remove anything unwanted', icon: Eraser, path: '/tools?tab=video', color: '#ef4444' },
+]
 
 export default function Dashboard() {
   const { projects, current, createProject, renameProject, importProject, loadProjects } = useProjects()
@@ -81,13 +112,28 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
       <LogoBackdrop />
       {/* Hero header */}
-      <header className="sticky top-0 z-20 glass-strong border-b border-[var(--color-border)] px-8 pt-6 pb-4">
-        <div className="mx-auto max-w-7xl flex items-center gap-5">
-          <button className="flex items-center gap-2.5 font-display text-2xl font-bold text-[var(--color-text)] cursor-pointer hover:text-[var(--color-accent-2)]">
-            <Logo size={38} className="shrink-0" />
+      <header className="sticky top-0 z-20 glass-strong border-b border-[var(--color-border)] px-8 py-4">
+        <div className="mx-auto max-w-7xl flex flex-wrap items-center gap-4">
+          <button onClick={() => navigate('/')} className="flex items-center gap-2.5 font-display text-2xl font-bold text-[var(--color-text)] cursor-pointer hover:text-[var(--color-accent-2)]">
+            <Logo size={36} className="shrink-0" />
             Pixelcraft
           </button>
-          <div className="relative ml-auto w-full max-w-sm">
+          <nav className="order-3 flex w-full flex-wrap items-center gap-1 md:order-none md:w-auto">
+            {NAV.map((item) => {
+              const Icon = item.icon
+              return (
+                <button
+                  key={item.label}
+                  onClick={() => (item.action === 'new' ? setOpen(true) : navigate(item.path || '/'))}
+                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] transition hover:bg-white/10 hover:text-[var(--color-text)]"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {item.label}
+                </button>
+              )
+            })}
+          </nav>
+          <div className="relative ml-auto w-full max-w-xs">
             <Input
               placeholder="Search templates or projects…"
               value={searchQuery}
@@ -96,53 +142,84 @@ export default function Dashboard() {
               className="w-full"
             />
           </div>
-          <Button variant="outline" className="h-10" onClick={() => navigate('/workspace')} title="Open the pro video & image editor studio">
-            <Monitor className="h-4 w-4" />
-            Pro Studio
-          </Button>
-          <Button className="h-10 brand-gradient text-black" onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" />
-            New Project
-          </Button>
+          {greetingName && (
+            <span className="hidden max-w-32 truncate rounded-full bg-white/5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] lg:inline">
+              {greetingName}
+            </span>
+          )}
         </div>
       </header>
 
       <main className="relative z-10 mx-auto max-w-7xl px-8 py-8 space-y-12">
         {/* Hero banner */}
-        <section className="hero-glow rounded-3xl glass-strong p-8 lg:p-12 animate-slide-up">
-          <div className="max-w-xl space-y-4">
-            <h1 className="font-display text-4xl font-bold tracking-tight">
-              {greetingName ? `Welcome back, ${greetingName}` : 'Create'} <span className="text-[var(--color-accent-2)]">anything</span>, faster.
+        <section className="hero-glow relative overflow-hidden rounded-3xl glass-strong p-8 lg:p-12 animate-slide-up">
+          <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[var(--color-accent-2)]/20 blur-3xl" />
+          <div className="pointer-events-none absolute bottom-0 right-32 h-40 w-40 rounded-full bg-[var(--color-accent-1)]/20 blur-3xl" />
+          <div className="relative z-10 max-w-2xl space-y-4">
+            <span className="glass inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs text-[var(--color-accent-2)]">
+              <Sparkles className="h-3.5 w-3.5" />
+              AI-powered creative suite
+            </span>
+            <h1 className="font-display text-5xl font-bold tracking-tight lg:text-6xl">
+              Create with <span className="text-[var(--color-accent-2)]">AI</span>
             </h1>
-            <p className="text-[var(--color-text-muted)] text-lg">
-              {greetingName ? `${projects.length} projects — design, edit and animate images & videos in one place.` : 'Design, edit and animate — image, video, graphics, all in one place.'}
+            <p className="text-lg text-[var(--color-text-muted)]">
+              Turn ideas into motion and imagery in the easiest way — design, edit and animate in one place.
             </p>
             {greetingName && (
-              <div className="glass rounded-lg inline-flex items-center gap-2 px-3 py-1 text-xs text-[var(--color-text-muted)] mt-2">
-                <span className="w-2 h-2 rounded-full bg-[var(--color-success)] animate-pulse" />
-                Signed in
+              <div className="glass inline-flex items-center gap-2 rounded-lg px-3 py-1 text-xs text-[var(--color-text-muted)]">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-success)]" />
+                Signed in as {greetingName}
               </div>
             )}
             <div className="flex flex-wrap gap-3 pt-2">
               <Button onClick={() => setOpen(true)} className="brand-gradient text-black h-11 px-6">
                 <Plus className="h-4 w-4" />
-                Start Creating
-              </Button>
-              <Button variant="outline" onClick={() => navigate('/templates')}>
-                Browse Templates
-              </Button>
-              <Button variant="outline" onClick={() => navigate('/tools')}>
-                <Wand2 className="h-4 w-4" />
-                Tools
+                Create project
               </Button>
               <Button variant="outline" onClick={() => navigate('/ai')}>
                 <Sparkles className="h-4 w-4" />
-                AI Image
+                Ask AI
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/tools')}>
+                <Wand2 className="h-4 w-4" />
+                More tools
               </Button>
             </div>
+            <div className="flex flex-wrap gap-3 pt-2 text-xs text-[var(--color-text-muted)]">
+              <span className="glass rounded px-2 py-1">{mediaCount} media items stored</span>
+              <span className="glass rounded px-2 py-1">{projects.length} projects</span>
+            </div>
           </div>
-          <div className="mt-6 flex gap-3 text-xs text-[var(--color-text-muted)] items-center">
-            <span className="glass rounded px-2 py-1">{mediaCount} media items stored</span>
+        </section>
+
+        {/* AI feature grid */}
+        <section className="animate-slide-up" style={{ animationDelay: '0.03s' }}>
+          <div className="mb-4">
+            <h2 className="font-display text-2xl font-semibold">Create with AI</h2>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">Pick a tool — each one opens a real, working part of PixelCraft.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+            {AI_CARDS.map((card) => {
+              const Icon = card.icon
+              return (
+                <button
+                  key={card.title}
+                  onClick={() => navigate(card.path)}
+                  className="group glass rounded-2xl p-4 text-left transition hover:-translate-y-0.5 hover:border-[var(--color-accent-3)]"
+                >
+                  <span
+                    className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl"
+                    style={{ background: `${card.color}22`, color: card.color }}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <p className="text-sm font-semibold">{card.title}</p>
+                  <p className="mt-1 text-[11px] leading-snug text-[var(--color-text-muted)]">{card.desc}</p>
+                  <span className="mt-3 inline-block text-[10px] text-[var(--color-accent-2)] opacity-0 transition group-hover:opacity-100">Open →</span>
+                </button>
+              )
+            })}
           </div>
         </section>
 

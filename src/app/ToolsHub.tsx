@@ -13,7 +13,7 @@ import {
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
-import { navigate } from './Router'
+import { navigate, useLocation } from './Router'
 import { useProjects, storeMediaFile } from '../store/projectsStore'
 import { v4 } from '../store/ids'
 import type { ProjectElement } from '../lib/types'
@@ -580,7 +580,15 @@ const TABS: Array<{ id: Kind; label: string; icon: ReactNode }> = [
 ]
 
 export default function ToolsHub() {
-  const [tab, setTab] = useState<Kind>('video')
+  const location = useLocation()
+  const [tab, setTab] = useState<Kind>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('tab') || ''
+    return (['video', 'image', 'audio', 'ai', 'solutions'] as string[]).includes(fromUrl) ? fromUrl as Kind : 'video'
+  })
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('tab') || ''
+    if ((['video', 'image', 'audio', 'ai', 'solutions'] as string[]).includes(fromUrl)) setTab(fromUrl as Kind)
+  }, [location])
   const { current } = useProjects()
   return (
     <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
