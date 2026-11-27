@@ -248,7 +248,7 @@ export default function EditorWorkspace() {
   const { session } = useAuth()
 
   const [aspect, setAspect] = useState<AspectRatio>(project?.aspectRatio || '9:16')
-  const [rail, setRail] = useState<RailPanel>('media')
+  const [rail, setRail] = useState<RailPanel>('effects')
   const [tab, setTab] = useState<InspectorTab>('Video')
   const [query, setQuery] = useState('')
   const [favorites, setFavorites] = useState<Set<string>>(() => loadSet('pixelcraft:favourite-assets'))
