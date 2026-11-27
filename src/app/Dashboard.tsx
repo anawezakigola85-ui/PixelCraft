@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Plus, Search, Sparkles, Monitor, LayoutGrid, Download, Wand2,
+  Plus, Search, Sparkles, Monitor, LayoutGrid, Wand2,
   Home, Film, Layers, Image as ImageIcon, Megaphone, Scissors,
   Clapperboard, Gauge, Mic, Eraser, Video,
 } from 'lucide-react'
@@ -47,7 +47,7 @@ const AI_CARDS: Array<{
 ]
 
 export default function Dashboard() {
-  const { projects, current, createProject, renameProject, importProject, loadProjects } = useProjects()
+  const { projects, current, createProject, renameProject, loadProjects } = useProjects()
   const { searchQuery, setSearchQuery } = useUI()
   const { session } = useAuth()
   const greetingName = session?.name || session?.email || ''
@@ -232,14 +232,6 @@ export default function Dashboard() {
           </Button>
           <Button variant="secondary" onClick={() => navigate('/settings')}>
             Settings
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => void importProject()}
-            className="ml-auto"
-          >
-            <Download className="h-4 w-4" />
-            Import Project
           </Button>
         </section>
 

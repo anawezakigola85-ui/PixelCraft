@@ -10,7 +10,6 @@ import {
   renameProject,
   duplicateProject as dupProject,
   deleteProject as delProject,
-  importProjectFile,
   exportProjectFile,
   getProject,
   getAllProjects,
@@ -44,7 +43,6 @@ export interface ProjectsStore {
   renameProject: (name: string) => Promise<void>
   duplicateProject: () => Promise<void>
   deleteProject: () => Promise<void>
-  importProject: () => Promise<void>
   exportProject: () => void
   saveCurrent: () => Promise<void>
   updateCurrent: (patch: Partial<Project>) => void
@@ -98,20 +96,6 @@ export const useProjects = create<ProjectsStore>()((set, get) => ({
     if (!current) return
     await delProject(current.id)
     set((s) => ({ projects: s.projects.filter((p) => p.id !== current.id), current: null }))
-  },
-  importProject: async () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.pixelcraft.json,application/json'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      const project = await importProjectFile(file, await currentUserId())
-      if (!project) return
-      await get().loadProjects()
-      set({ current: project })
-    }
-    input.click()
   },
   exportProject: () => {
     const current = get().current
