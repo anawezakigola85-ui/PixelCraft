@@ -59,6 +59,9 @@ export interface Track {
   id: string
   name: string
   type: 'video' | 'audio' | 'image' | 'text'
+  hidden?: boolean
+  locked?: boolean
+  muted?: boolean
 }
 
 export interface Project {
