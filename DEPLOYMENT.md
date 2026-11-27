@@ -49,7 +49,8 @@ Expected: `dist/index.html`, `dist/assets/*`, no TypeScript errors. Chunk-size a
 | `CORS_ORIGIN` | Yes in production | `https://pixelcraft.vercel.app` | Must exactly match the browser origin. |
 | `OAUTH_REDIRECT_URI` | Only for OAuth | `https://pixelcraft.vercel.app/auth/callback` | Defaults to `APP_URL/auth/callback`. |
 | `CROSS_ORIGIN_RESOURCE_POLICY` | Yes when using `VITE_API_BASE_URL` | `cross-origin` | Use `same-origin` only with a same-origin `/api` rewrite. |
-| `OPENAI_API_KEY` | Optional | `sk-...` | Enables OpenAI chat/image/transcription. |
+| `GEMINI_API_KEY` | Optional (free) | `AIza...` | **Free tier** — enables Gemini text chat and audio transcription. Get it at `https://aistudio.google.com/api-keys`. |
+| `OPENAI_API_KEY` | Optional | `sk-...` | Enables OpenAI chat/image/transcription. Image generation needs this key. |
 | `ANTHROPIC_API_KEY` | Optional | `sk-ant-...` | Enables Anthropic chat. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional | — | Enables Google sign-in. |
 | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_TENANT` | Optional | — | Enables Microsoft sign-in. |

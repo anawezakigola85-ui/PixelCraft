@@ -58,8 +58,10 @@ export async function generateImage(prompt: string, opts?: {
 }
 
 export async function transcribeAudio(file: File): Promise<string> {
+  const { aiProvider } = useSettings.getState()
   const form = new FormData()
   form.append('file', file)
+  form.append('provider', aiProvider)
   const res = await fetch(apiUrl('/api/ai/transcribe'), {
     method: 'POST',
     headers: { Authorization: getCsrfToken() },

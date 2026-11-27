@@ -72,7 +72,10 @@ export default function SettingsPage() {
             <label className="text-xs text-[var(--color-text-muted)]">Provider</label>
             <Select
               value={s.aiProvider}
-              options={[{ value: 'openai', label: 'OpenAI (chat + DALL·E)' }]}
+              options={[
+                { value: 'openai', label: 'OpenAI (paid · chat + image)' },
+                { value: 'gemini', label: 'Google Gemini (FREE chat + transcription)' },
+              ]}
               onChange={(e) => void saveSettings({ ...s, aiProvider: e.target.value })}
               className="w-64"
             />
@@ -80,7 +83,7 @@ export default function SettingsPage() {
             <Input
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="gpt-4o-mini"
+              placeholder={s.aiProvider === 'gemini' ? 'gemini-3.5-flash-lite' : 'gpt-4o-mini'}
               className="mt-1 w-64 h-10"
             />
             <label className="text-xs text-[var(--color-text-muted)]">Local note only — the real key is NOT entered here</label>
@@ -90,7 +93,14 @@ export default function SettingsPage() {
             </Button>
 
             <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs text-[var(--color-text-muted)] space-y-2">
-              <p className="font-semibold text-[var(--color-text)]">How to enable AI (3 steps)</p>
+              <p className="font-semibold text-[var(--color-text)]">Free option (no card needed)</p>
+              <p>
+                Get a free key at{' '}
+                <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" className="text-[var(--color-accent-2)] underline">aistudio.google.com/api-keys</a>
+                {' '}→ in Render set <code>GEMINI_API_KEY</code> → choose provider <b>Google Gemini (FREE)</b> above → model <code>gemini-3.5-flash-lite</code>.
+                This powers the AI Assistant chat and audio transcription for free. Image generation still needs an OpenAI key because Gemini image models are paid.
+              </p>
+              <p className="font-semibold text-[var(--color-text)] pt-1">Paid option (OpenAI · chat + images)</p>
               <ol className="list-decimal pl-5 space-y-1.5">
                 <li>
                   Create your key at{' '}

@@ -386,8 +386,42 @@ async function handleChat(req, res, body) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(res, 400, { error: 'Messages are required.' })
   }
-  const key = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY
-  if (!key) return json(res, 503, { error: 'AI provider not configured: set OPENAI_API_KEY (or ANTHROPIC_API_KEY) in backend/.env' })
+  const selected = String(provider || 'openai').toLowerCase()
+
+  // Google Gemini Developer API has a free tier for text chat.
+  if (selected === 'gemini') {
+    const geminiKey = process.env.GEMINI_API_KEY
+    if (!geminiKey) return json(res, 503, { error: 'Set GEMINI_API_KEY (free tier) in the Render Environment.' })
+    const modelId = String(model || 'gemini-3.5-flash-lite')
+    const systemMessage = messages.find((m) => m.role === 'system')?.content
+    const contents = messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: String(m.content || '') }],
+      }))
+    const payload = {
+      contents,
+      ...(systemMessage ? { systemInstruction: { parts: [{ text: String(systemMessage) }] } } : {}),
+    }
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
+        body: JSON.stringify(payload),
+      },
+    )
+    const output = await response.json().catch(() => ({}))
+    const message = output.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('')
+      || output.error?.message
+      || ''
+    if (!response.ok) return json(res, response.status, { error: message || `Gemini error (${response.status})` })
+    return json(res, 200, { message })
+  }
+
+  const key = selected === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY
+  if (!key) return json(res, 503, { error: 'AI provider not configured: set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY (free) in the Render Environment.' })
   const url = provider === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'
   const payload = provider === 'anthropic'
     ? {
@@ -469,10 +503,39 @@ async function handleTranscribe(req) {
   const boundary = (req.headers['content-type'] || '').match(/boundary=(.+)$/)?.[1]
   if (!boundary) return { status: 400, error: 'Invalid multipart request' }
   const parsed = parseMultipart(body, boundary)
-  const key = process.env.OPENAI_API_KEY
-  if (!key) return { status: 503, error: 'Set OPENAI_API_KEY in backend/.env to transcribe.' }
   const fileEntry = parsed.find((part) => part.name === 'file')
   if (!fileEntry) return { status: 400, error: 'Missing file' }
+  const chosen = String(parsed.find((part) => part.name === 'provider')?.buffer.toString() || 'openai').toLowerCase()
+
+  // Gemini 3.5 Transcribe is free on the Gemini Developer API tier.
+  if (chosen === 'gemini') {
+    const geminiKey = process.env.GEMINI_API_KEY
+    if (!geminiKey) return { status: 503, error: 'Set GEMINI_API_KEY (free tier) in the Render Environment to transcribe.' }
+    const response = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              inline_data: {
+                mime_type: fileEntry.type || 'audio/wav',
+                data: fileEntry.buffer.toString('base64'),
+              },
+            }],
+          }],
+        }),
+      },
+    )
+    const output = await response.json().catch(() => ({}))
+    const text = output.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || ''
+    if (!response.ok) return { status: response.status, error: output.error?.message || `Transcription failed (${response.status})` }
+    return { status: 200, text }
+  }
+
+  const key = process.env.OPENAI_API_KEY
+  if (!key) return { status: 503, error: 'Set OPENAI_API_KEY in backend/.env to transcribe, or choose the free Gemini provider.' }
   const form = new FormData()
   form.append('file', new Blob([fileEntry.buffer], { type: fileEntry.type || 'audio/wav' }), fileEntry.filename || 'audio')
   const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
