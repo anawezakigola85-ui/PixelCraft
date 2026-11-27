@@ -14,7 +14,7 @@ import { useEditor } from '../store/editor'
 import { useProjects, storeMediaFile } from '../store/projectsStore'
 import { nextProjectName } from '../lib/projects'
 import { useAuth } from '../store/authStore'
-import { getAllMedia } from '../lib/projects'
+import { deleteMedia, getAllMedia } from '../lib/projects'
 import { exportVideo, type ExportFormat } from '../lib/exportVideo'
 import { designToDataUrl } from '../lib/previewSvg'
 import { TEMPLATES } from '../data/templates'
@@ -512,6 +512,32 @@ export default function EditorWorkspace() {
     setStatus(message)
   }
 
+  const handleRemoveAsset = async (asset: Asset) => {
+    if (!media.some((m) => m.id === asset.id)) return
+    if (!window.confirm(`Remove “${asset.name}” from uploads? Clips using it will also be removed.`)) return
+    setStatus(`Removing ${asset.name}…`)
+    try {
+      await deleteMedia(asset.id, asset.src)
+      snapshot()
+      const matches = (item: { mediaId?: string; src?: string }) =>
+        item.mediaId === asset.id || (!!asset.src && item.src === asset.src)
+      const ed = useEditor.getState()
+      const nextClips = ed.clips.filter((c) => !matches(c))
+      const nextElements = ed.elements.filter((e) => !matches(e))
+      useEditor.setState({
+        clips: nextClips,
+        elements: nextElements,
+        selectedClipId: nextClips.some((c) => c.id === ed.selectedClipId) ? ed.selectedClipId : undefined,
+        selectedElementId: nextElements.some((e) => e.id === ed.selectedElementId) ? ed.selectedElementId : undefined,
+      })
+      void useProjects.getState().updateCurrent({ clips: nextClips, elements: nextElements })
+      setMedia((prev) => prev.filter((m) => m.id !== asset.id))
+      setStatus(`“${asset.name}” removed from uploads and timeline`)
+    } catch (error) {
+      setStatus(`Remove failed: ${(error as Error).message}`)
+    }
+  }
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -868,6 +894,7 @@ export default function EditorWorkspace() {
               <div className="grid grid-cols-2 gap-2">
                 {visibleAssets.map((asset) => {
                   const Icon = asset.kind === 'audio' ? Music2 : asset.kind === 'video' ? Video : asset.kind === 'text' ? Type : asset.kind === 'shape' ? Shapes : asset.kind === 'transition' ? Sparkles : ImageIcon
+                  const isUpload = media.some((m) => m.id === asset.id)
                   return (
                     <div key={asset.id} className="group relative overflow-hidden rounded-lg" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
                       <button type="button" onClick={() => void addAsset(asset)} className="block w-full text-left" title={`Add ${asset.name}`}>
@@ -877,6 +904,17 @@ export default function EditorWorkspace() {
                         </div>
                         <p className="truncate px-2 py-1.5 text-[10px]" style={{ color: C.text }}>{asset.name}</p>
                       </button>
+                      {isUpload && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); void handleRemoveAsset(asset) }}
+                          className="absolute left-1 top-1 rounded p-1"
+                          style={{ background: '#0009', color: '#ff8a8a' }}
+                          title={`Remove ${asset.name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                       {asset.kind !== 'transition' && asset.kind !== 'text' && asset.kind !== 'shape' && (
                         <button
                           type="button"

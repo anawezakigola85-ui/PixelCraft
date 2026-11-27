@@ -119,6 +119,22 @@ export async function getAllMedia(userId?: string): Promise<MediaItem[]> {
     .sort((a, b) => b.createdAt - a.createdAt)
 }
 
+/** Removes an upload and any clips/elements in every project that referenced it. */
+export async function deleteMedia(id: string, src?: string) {
+  await db.delete('media', id)
+  if (!src) return
+  const projects = await getAllProjects()
+  for (const project of projects) {
+    const clips = (project.clips || []).filter((c) => c.mediaId !== id && c.src !== src)
+    const elements = (project.elements || []).filter((e) => e.mediaId !== id && e.src !== src)
+    const clipsChanged = clips.length !== (project.clips || []).length
+    const elementsChanged = elements.length !== (project.elements || []).length
+    if (clipsChanged || elementsChanged) {
+      await db.put('projects', { ...project, clips, elements })
+    }
+  }
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
