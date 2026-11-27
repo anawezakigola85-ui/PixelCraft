@@ -1,15 +1,19 @@
 /**
- * Full template library. TikTok gets a dedicated pack so every vertical
- * template is available in the gallery, dashboard and Pro Studio.
+ * Full template library. TikTok, Canva and CapCut each get a dedicated pack
+ * so their designs are available in the gallery, dashboard and Pro Studio.
  */
 
 import { makeTemplate as t } from './templateFactory'
 import { TIKTOK_TEMPLATES } from './tiktokTemplates'
+import { CANVA_TEMPLATES } from './canvaTemplates'
+import { CAPCUT_TEMPLATES } from './capcutTemplates'
 import type { Template } from '../lib/types'
 
 export const TEMPLATES: Template[] = [
-  // ---------- Dedicated TikTok pack (40 vertical templates) ----------
+  // ---------- Dedicated packs (TikTok / Canva / CapCut) ----------
   ...TIKTOK_TEMPLATES,
+  ...CANVA_TEMPLATES,
+  ...CAPCUT_TEMPLATES,
 
   // ---------- Original TikTok / Reels / Shorts ----------
   t('tiktok-motivation', '5-Minute Abs Challenge', 'TikTok', 'Bold + Kinetic', ['5-MINUTE', 'ABS CHALLENGE', 'NO EQUIPMENT', 'GET STRONG'], ['#a371f7', '#22d3ee', '#ec4899', '#fbbf24'], '9:16'),

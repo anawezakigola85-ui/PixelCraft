@@ -233,7 +233,9 @@ export default function EditorWorkspace() {
       id: `tpl-${tp.id}`,
       name: tp.name,
       kind: 'template',
-      label: tp.category === 'TikTok' ? 'TIKTOK' : tp.category.toUpperCase().slice(0, 8),
+      label: tp.category === 'TikTok' || tp.category === 'Canva' || tp.category === 'CapCut'
+        ? tp.category.toUpperCase()
+        : tp.category.toUpperCase().slice(0, 8),
       template: tp,
       thumbnail: designToDataUrl(tp),
     })),
@@ -570,7 +572,7 @@ export default function EditorWorkspace() {
   }), [media, templateAssets])
 
   const visibleAssets = assetsByPanel[rail].filter((a) => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim().toLowerCase().replace(/cup[\s-]?cut/g, 'capcut')
     if (!q) return true
     const haystack = [
       a.name,

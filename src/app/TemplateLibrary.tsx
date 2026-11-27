@@ -13,7 +13,7 @@ import type { Template } from '../lib/types'
 import { cn } from '../lib/utils'
 
 const CATEGORIES = [
-  'All', 'TikTok', 'Instagram', 'YouTube', 'Reels', 'Shorts', 'Music', 'Cinematic',
+  'All', 'TikTok', 'Canva', 'CapCut', 'Instagram', 'YouTube', 'Reels', 'Shorts', 'Music', 'Cinematic',
   'Business', 'Marketing', 'Education', 'Gaming', 'Sports', 'Fashion', 'Birthday',
   'Event', 'Travel', 'Motivation', 'Quotes', 'Ads',
 ]
@@ -32,7 +32,8 @@ export default function TemplateLibrary() {
     () =>
       TEMPLATES.filter((tp) => {
         const catOk = category === 'All' || tp.category.toLowerCase() === category.toLowerCase()
-        const s = search.trim().toLowerCase()
+        // Accept the common misspelling "cupcut" as well as "capcut".
+        const s = search.trim().toLowerCase().replace(/cup[\s-]?cut/g, 'capcut')
         const nameOk =
           tp.name.toLowerCase().includes(s) ||
           tp.style.toLowerCase().includes(s) ||
