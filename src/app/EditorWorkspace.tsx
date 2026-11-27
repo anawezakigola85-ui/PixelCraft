@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Undo2, Redo2, Scissors, LayoutGrid, Columns2, PanelRight, Monitor, Settings, Download,
-  Search, Star, Plus, Video, Film, Music2, Type, Shapes, Palette, Sparkles, Play, Pause,
+  Search, Star, Plus, Video, Music2, Type, Shapes, Palette, Sparkles, Play, Pause,
   SkipBack, SkipForward, Volume2, VolumeX, Maximize2, ChevronDown, ChevronRight,
   Lock, Eye, Trash2, Copy, Snowflake, ZoomIn, ZoomOut, Upload,
   Image as ImageIcon, Layers, Wand2, Crop, Gauge, SlidersHorizontal, Check, X,
@@ -34,7 +34,7 @@ const C = {
   muted: '#7E8497',
 } as const
 
-type RailPanel = 'media' | 'stock' | 'audio' | 'text' | 'elements' | 'transitions' | 'filters' | 'brand'
+type RailPanel = 'media' | 'templates' | 'audio' | 'text' | 'elements' | 'transitions' | 'filters' | 'brand'
 type InspectorTab = 'Video' | 'Audio' | 'Text' | 'Adjust'
 type AssetKind = 'image' | 'video' | 'audio' | 'template' | 'text' | 'shape' | 'transition'
 
@@ -60,7 +60,7 @@ interface Asset {
 
 const RAIL: Array<{ id: RailPanel; label: string; icon: ReactNode }> = [
   { id: 'media', label: 'Media', icon: <Video className="h-4 w-4" /> },
-  { id: 'stock', label: 'Stock', icon: <Film className="h-4 w-4" /> },
+  { id: 'templates', label: 'Templates', icon: <LayoutGrid className="h-4 w-4" /> },
   { id: 'audio', label: 'Audio', icon: <Music2 className="h-4 w-4" /> },
   { id: 'text', label: 'Text', icon: <Type className="h-4 w-4" /> },
   { id: 'elements', label: 'Elements', icon: <Shapes className="h-4 w-4" /> },
@@ -614,11 +614,11 @@ export default function EditorWorkspace() {
   }
 
   const assetsByPanel = useMemo<Record<RailPanel, Asset[]>>(() => ({
-    media: [...media, ...templateAssets],
-    stock: templateAssets,
+    media,
+    templates: templateAssets,
     audio: media.filter((a) => a.kind === 'audio'),
     text: TEXT_PRESETS,
-    elements: [...SHAPE_PRESETS, ...templateAssets],
+    elements: SHAPE_PRESETS,
     transitions: TRANSITION_PRESETS,
     filters: [],
     brand: [],
@@ -894,7 +894,7 @@ export default function EditorWorkspace() {
               </div>
             ) : (
               <div className="mt-8 text-center text-[11px]" style={{ color: C.muted }}>
-                <p>No assets found.</p>
+                <p>{rail === 'templates' ? 'No templates found.' : 'No assets found.'}</p>
                 {(rail === 'media' || rail === 'audio') && <p className="mt-2">Upload a file above to add real media.</p>}
               </div>
             )}
