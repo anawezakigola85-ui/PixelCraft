@@ -12,6 +12,37 @@ type Tool = 'select' | 'move' | 'image' | 'text' | 'shape' | 'crop'
 interface DragEnd {
   target: { x(): number; y(): number; width(): number; height(): number }
 }
+interface TransformEnd extends DragEnd {
+  target: DragEnd['target'] & {
+    scaleX(): number
+    scaleX(value: number): number
+    scaleY(): number
+    scaleY(value: number): number
+    rotation(): number
+  }
+}
+
+function transformProps(el: ProjectElement) {
+  const scale = Number(el.params?.scale || 1)
+  return { rotation: Number(el.params?.rotation || 0), scaleX: scale, scaleY: scale }
+}
+
+function persistTransform(el: ProjectElement, e: TransformEnd) {
+  const node = e.target
+  const sx = node.scaleX()
+  const sy = node.scaleY()
+  const rotation = node.rotation()
+  const scale = Number(el.params?.scale || 1)
+  node.scaleX(1)
+  node.scaleY(1)
+  return {
+    x: node.x(),
+    y: node.y(),
+    width: Math.max(10, node.width() * sx),
+    height: Math.max(10, node.height() * sy),
+    params: { ...(el.params || {}), rotation, scale: scale * ((sx + sy) / 2) },
+  }
+}
 
 const TOOL_META: Record<Exclude<Tool, 'move'>, { label: string; shortcut: string; icon: string }> = {
   select: { label: 'Select', shortcut: '1', icon: 'target' },
@@ -41,10 +72,11 @@ function ElementNode({ el, onClick }: { el: ProjectElement; onClick: () => void 
         fontStyle={el.fontStyle || 'normal'}
         textAlign={el.textAlign || 'left'}
         fill={el.color || '#ffffff'}
+        {...transformProps(el)}
         draggable
         onClick={onClick}
         onDragEnd={(e: DragEnd) => setEl(el.id, { x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={(e: DragEnd) => setEl(el.id, { x: e.target.x(), y: e.target.y(), width: e.target.width(), height: e.target.height() })}
+        onTransformEnd={(e: TransformEnd) => setEl(el.id, persistTransform(el, e))}
       />
     )
   }
@@ -60,9 +92,11 @@ function ElementNode({ el, onClick }: { el: ProjectElement; onClick: () => void 
       height: el.height || 200,
       fill: el.fill || '#6366f1',
       cornerRadius: el.cornerRadius || 0,
+      ...transformProps(el),
       draggable: true,
       onClick,
       onDragEnd: (e: DragEnd) => setEl(el.id, { x: e.target.x(), y: e.target.y() }),
+      onTransformEnd: (e: TransformEnd) => setEl(el.id, persistTransform(el, e)),
     }
     if (variant === 'circle') return <Circle {...common} radius={(el.width || 200) / 2} />
     if (variant === 'line')
@@ -84,11 +118,12 @@ function ElementNode({ el, onClick }: { el: ProjectElement; onClick: () => void 
       y={el.y}
       width={el.width || 300}
       height={el.height || 300}
+      {...transformProps(el)}
       draggable
       opacity={el.opacity ?? 1}
       onClick={onClick}
       onDragEnd={(e: DragEnd) => setEl(el.id, { x: e.target.x(), y: e.target.y() })}
-      onTransformEnd={(e: DragEnd) => setEl(el.id, { x: e.target.x(), y: e.target.y(), width: e.target.width(), height: e.target.height() })}
+      onTransformEnd={(e: TransformEnd) => setEl(el.id, persistTransform(el, e))}
     />
   )
 }

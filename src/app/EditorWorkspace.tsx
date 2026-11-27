@@ -3,16 +3,21 @@ import {
   Undo2, Redo2, Scissors, LayoutGrid, Columns2, PanelRight, Monitor, Settings, Download,
   Search, Star, Plus, Video, Film, Music2, Type, Shapes, Palette, Sparkles, Play, Pause,
   SkipBack, SkipForward, Volume2, VolumeX, Maximize2, ChevronDown, ChevronRight,
-  Lock, Eye, Trash2, Copy, Snowflake, ZoomIn, ZoomOut,
+  Lock, Eye, Trash2, Copy, Snowflake, ZoomIn, ZoomOut, Upload,
   Image as ImageIcon, Layers, Wand2, Crop, Gauge, SlidersHorizontal, Check, X,
+  AlignLeft, AlignCenter, AlignRight, Bold,
 } from 'lucide-react'
 import Logo from '../components/ui/Logo'
+import DesignPreview from '../components/ui/DesignPreview'
 import { navigate } from './Router'
 import { useEditor } from '../store/editor'
-import { useProjects } from '../store/projectsStore'
+import { useProjects, storeMediaFile } from '../store/projectsStore'
+import { useAuth } from '../store/authStore'
 import { getAllMedia } from '../lib/projects'
-import { exportVideo } from '../lib/exportVideo'
-import type { AspectRatio, Clip, MediaItem, ProjectElement } from '../lib/types'
+import { exportVideo, type ExportFormat } from '../lib/exportVideo'
+import { designToDataUrl } from '../lib/previewSvg'
+import { TEMPLATES } from '../data/templates'
+import type { AspectRatio, Clip, MediaItem, Project, ProjectElement, Template } from '../lib/types'
 import { v4 } from '../store/ids'
 
 /* Exact pro-editor palette from the design spec. */
@@ -30,7 +35,7 @@ const C = {
 
 type RailPanel = 'media' | 'stock' | 'audio' | 'text' | 'elements' | 'transitions' | 'filters' | 'brand'
 type InspectorTab = 'Video' | 'Audio' | 'Text' | 'Adjust'
-type AssetKind = 'image' | 'video' | 'audio' | 'template'
+type AssetKind = 'image' | 'video' | 'audio' | 'template' | 'text' | 'shape' | 'transition'
 
 interface Asset {
   id: string
@@ -38,8 +43,18 @@ interface Asset {
   kind: AssetKind
   src?: string
   thumbnail?: string
-  gradient: string
+  gradient?: string
   label: string
+  template?: Template
+  textPreset?: {
+    text: string
+    fontSize: number
+    color: string
+    fontWeight: number
+    textAlign: 'left' | 'center' | 'right'
+  }
+  shape?: 'rect' | 'circle' | 'line'
+  transition?: string
 }
 
 const RAIL: Array<{ id: RailPanel; label: string; icon: ReactNode }> = [
@@ -53,23 +68,58 @@ const RAIL: Array<{ id: RailPanel; label: string; icon: ReactNode }> = [
   { id: 'brand', label: 'Brand', icon: <Layers className="h-4 w-4" /> },
 ]
 
-const SAMPLE_ASSETS: Asset[] = [
-  { id: 'a1', name: 'City Lights', kind: 'video', gradient: 'linear-gradient(135deg,#3b1d6e,#7c3aed)', label: 'VIDEO' },
-  { id: 'a2', name: 'Sunset Drive', kind: 'video', gradient: 'linear-gradient(135deg,#7c2d12,#f59e0b)', label: 'VIDEO' },
-  { id: 'a3', name: 'Studio Portrait', kind: 'image', gradient: 'linear-gradient(135deg,#0e7490,#00e5ff)', label: 'IMAGE' },
-  { id: 'a4', name: 'Neon Nights', kind: 'image', gradient: 'linear-gradient(135deg,#4c1d95,#db2777)', label: 'IMAGE' },
-  { id: 'a5', name: 'Ambient Beat', kind: 'audio', gradient: 'linear-gradient(135deg,#065f46,#22c55e)', label: 'AUDIO' },
-  { id: 'a6', name: 'Opening Title', kind: 'template', gradient: 'linear-gradient(135deg,#1e3a8a,#6366f1)', label: 'TEMPLATE' },
-  { id: 'a7', name: 'Lower Third', kind: 'template', gradient: 'linear-gradient(135deg,#312e81,#a371f7)', label: 'TEMPLATE' },
-  { id: 'a8', name: 'Mountain Drone', kind: 'video', gradient: 'linear-gradient(135deg,#134e4a,#0ea5e9)', label: 'VIDEO' },
+const EFFECTS: Array<{ name: string; filter: string }> = [
+  { name: 'None', filter: 'none' },
+  { name: 'Vintage', filter: 'sepia(0.45) contrast(1.1)' },
+  { name: 'Cinema', filter: 'contrast(1.25) saturate(0.85)' },
+  { name: 'Neon', filter: 'saturate(1.8) contrast(1.2)' },
+  { name: 'Glitch', filter: 'hue-rotate(35deg) contrast(1.3)' },
+  { name: 'Fade', filter: 'opacity(0.82)' },
+  { name: 'B&W', filter: 'grayscale(1)' },
+  { name: 'Warm', filter: 'sepia(0.2) saturate(1.35)' },
 ]
 
-const EFFECTS = ['None', 'Vintage', 'Cinema', 'Neon', 'Glitch', 'Fade', 'Blur', 'B&W']
+const TEXT_PRESETS: Asset[] = [
+  { id: 'text-heading', name: 'Bold Heading', kind: 'text', label: 'TEXT', textPreset: { text: 'YOUR HEADLINE', fontSize: 104, color: '#FFFFFF', fontWeight: 800, textAlign: 'center' } },
+  { id: 'text-subtitle', name: 'Subtitle', kind: 'text', label: 'TEXT', textPreset: { text: 'Add a supporting line', fontSize: 56, color: C.cyan, fontWeight: 600, textAlign: 'center' } },
+  { id: 'text-lower-third', name: 'Lower Third', kind: 'text', label: 'TEXT', textPreset: { text: 'NAME · TITLE', fontSize: 48, color: C.purple, fontWeight: 700, textAlign: 'left' } },
+  { id: 'text-caption', name: 'Caption', kind: 'text', label: 'TEXT', textPreset: { text: 'Captivate your audience', fontSize: 42, color: '#FFFFFF', fontWeight: 500, textAlign: 'center' } },
+]
+
+const SHAPE_PRESETS: Asset[] = [
+  { id: 'shape-rect', name: 'Rectangle', kind: 'shape', label: 'SHAPE', shape: 'rect' },
+  { id: 'shape-circle', name: 'Circle', kind: 'shape', label: 'SHAPE', shape: 'circle' },
+  { id: 'shape-line', name: 'Line', kind: 'shape', label: 'SHAPE', shape: 'line' },
+]
+
+const TRANSITION_PRESETS: Asset[] = [
+  { id: 'transition-fade', name: 'Fade', kind: 'transition', label: 'FX', transition: 'fade' },
+  { id: 'transition-slide', name: 'Slide', kind: 'transition', label: 'FX', transition: 'slide' },
+  { id: 'transition-zoom', name: 'Zoom', kind: 'transition', label: 'FX', transition: 'zoom' },
+  { id: 'transition-wipe', name: 'Wipe', kind: 'transition', label: 'FX', transition: 'wipe' },
+]
+
 const ASPECTS: AspectRatio[] = ['9:16', '16:9', '1:1', '4:5']
+const FONT_OPTIONS = ["'Inter', sans-serif", "'Georgia', serif", "'Courier New', monospace", "'Arial', sans-serif"]
 
 function fmtTime(seconds: number) {
   const s = Math.max(0, Math.floor(seconds))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+function fullElement(partial: Partial<ProjectElement> & { type: string }, z: number): ProjectElement {
+  return {
+    ...partial,
+    id: partial.id || v4(),
+    name: partial.name || partial.type,
+    x: partial.x ?? 120,
+    y: partial.y ?? 120,
+    width: partial.width ?? 400,
+    height: partial.height ?? 120,
+    z,
+    locked: partial.locked ?? false,
+    hidden: partial.hidden ?? false,
+  } as ProjectElement
 }
 
 function IconButton({
@@ -114,8 +164,8 @@ function Section({ title, icon, children }: { title: string; icon: ReactNode; ch
 }
 
 function Slider({
-  label, value, min, max, step = 1, suffix = '', onChange,
-}: { label: string; value: number; min: number; max: number; step?: number; suffix?: string; onChange: (v: number) => void }) {
+  label, value, min, max, step = 1, suffix = '', onChange, disabled,
+}: { label: string; value: number; min: number; max: number; step?: number; suffix?: string; onChange: (v: number) => void; disabled?: boolean }) {
   return (
     <label className="block">
       <span className="mb-1 flex justify-between text-[10px]" style={{ color: C.muted }}>
@@ -128,8 +178,9 @@ function Slider({
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-1 w-full cursor-pointer appearance-none rounded-full"
+        className="h-1 w-full cursor-pointer appearance-none rounded-full disabled:opacity-40"
         style={{ accentColor: C.cyan }}
         aria-label={label}
       />
@@ -145,20 +196,23 @@ export default function EditorWorkspace() {
   const time = useEditor((s) => s.time)
   const volume = useEditor((s) => s.volume)
   const selectedClipId = useEditor((s) => s.selectedClipId)
+  const selectedElementId = useEditor((s) => s.selectedElementId)
   const zoom = useEditor((s) => s.timelineZoom)
+  const { session } = useAuth()
 
   const [aspect, setAspect] = useState<AspectRatio>(project?.aspectRatio || '9:16')
   const [rail, setRail] = useState<RailPanel>('media')
   const [tab, setTab] = useState<InspectorTab>('Video')
   const [query, setQuery] = useState('')
   const [favorites, setFavorites] = useState<Set<string>>(new Set())
-  const [media, setMedia] = useState<Asset[]>(SAMPLE_ASSETS)
+  const [media, setMedia] = useState<Asset[]>([])
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
   const [opacity, setOpacity] = useState(1)
   const [speed, setSpeed] = useState(1)
   const [color, setColor] = useState<string>(C.purple)
-  const [effect, setEffect] = useState('None')
+  const [brandColors, setBrandColors] = useState<string[]>([C.purple, C.cyan, '#22c55e', '#f59e0b'])
+  const [brandFont, setBrandFont] = useState(FONT_OPTIONS[0])
   const [exportFormat, setExportFormat] = useState('MP4')
   const [resolution, setResolution] = useState('1080p')
   const [frameRate, setFrameRate] = useState('30 fps')
@@ -171,10 +225,64 @@ export default function EditorWorkspace() {
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const dragRef = useRef<{ id: string; startX: number; originalStart: number } | null>(null)
 
-  useEffect(() => {
-    void useProjects.getState().loadProjects()
-  }, [])
+  const templateAssets = useMemo<Asset[]>(
+    () => TEMPLATES.map((tp) => ({
+      id: `tpl-${tp.id}`,
+      name: tp.name,
+      kind: 'template',
+      label: 'TEMPLATE',
+      template: tp,
+      thumbnail: designToDataUrl(tp),
+    })),
+    [],
+  )
+
+  const duration = useMemo(() => {
+    const end = clips.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
+    return Math.max(30, Math.ceil(end / 5) * 5 + 5)
+  }, [clips])
+
+  const playheadClip = clips.find((c) => time >= c.start && time < c.start + c.duration)
+  const previewClip = playheadClip?.src && !playheadClip.src.startsWith('data:image/svg+xml') ? playheadClip : undefined
+  const selectedClip = clips.find((c) => c.id === selectedClipId)
+  const selectedElement = elements.find((e) => e.id === selectedElementId)
+  const selectedText = selectedElement?.type === 'text' ? selectedElement : undefined
+  const effects = project?.effects || {}
+
+  const filterString = useMemo(() => {
+    const parts: string[] = []
+    if (effects.filter && effects.filter !== 'none') parts.push(effects.filter)
+    if ((effects.brightness ?? 1) !== 1) parts.push(`brightness(${effects.brightness})`)
+    if ((effects.contrast ?? 1) !== 1) parts.push(`contrast(${effects.contrast})`)
+    if ((effects.saturation ?? 1) !== 1) parts.push(`saturate(${effects.saturation})`)
+    return parts.join(' ') || 'none'
+  }, [effects])
+
+  const pxPerSecond = (58 * zoom) / 5
+  const playheadPercent = Math.min(100, (time / duration) * 100)
+
+  const refreshMedia = useCallback(async () => {
+    const items = await getAllMedia(session?.userId)
+    const uploads: Asset[] = items.map((item: MediaItem) => {
+      const kind: AssetKind = item.type.startsWith('video') ? 'video' : item.type.startsWith('audio') ? 'audio' : 'image'
+      return {
+        id: item.id,
+        name: item.name,
+        kind,
+        src: item.src,
+        thumbnail: item.thumbnail || (kind === 'image' ? item.src : undefined),
+        gradient: 'linear-gradient(135deg,#312e81,#0e7490)',
+        label: kind.toUpperCase(),
+      }
+    })
+    setMedia(uploads)
+  }, [session?.userId])
+
+  useEffect(() => { void useProjects.getState().loadProjects() }, [])
+  useEffect(() => { void refreshMedia() }, [refreshMedia])
 
   useEffect(() => {
     if (!project) return
@@ -183,29 +291,10 @@ export default function EditorWorkspace() {
       useEditor.setState({ selectedProjectId: project.id, elements: project.elements, clips: project.clips })
     }
     setAspect(project.aspectRatio)
+    if (project.brand?.colors?.length) setBrandColors(project.brand.colors)
+    if (project.brand?.font) setBrandFont(project.brand.font)
+    setColor(project.brand?.colors?.[0] || C.purple)
   }, [project])
-
-  useEffect(() => {
-    void getAllMedia().then((items: MediaItem[]) => {
-      const uploads = items.map((item) => ({
-        id: item.id,
-        name: item.name,
-        kind: (item.type.startsWith('video') ? 'video' : item.type.startsWith('audio') ? 'audio' : 'image') as AssetKind,
-        src: item.src,
-        thumbnail: item.thumbnail,
-        gradient: 'linear-gradient(135deg,#312e81,#0e7490)',
-        label: item.type.split('/')[0].toUpperCase(),
-      }))
-      if (uploads.length) setMedia([...uploads, ...SAMPLE_ASSETS])
-    }).catch(() => {})
-  }, [])
-
-  const duration = useMemo(() => {
-    const end = clips.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
-    return Math.max(30, Math.ceil(end / 5) * 5 + 5)
-  }, [clips])
-
-  const activeClip = clips.find((c) => c.id === selectedClipId)
 
   useEffect(() => {
     if (!playing || frozen) return
@@ -222,12 +311,30 @@ export default function EditorWorkspace() {
         return
       }
       ed.setTime(next)
-      if (videoRef.current && videoRef.current.readyState > 0) videoRef.current.currentTime = next
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
   }, [playing, frozen, duration])
+
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !previewClip?.src) return
+    const local = Math.max(0, time - previewClip.start)
+    if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local
+    if (playing) void v.play().catch(() => {})
+    else v.pause()
+  }, [time, playing, previewClip?.id, previewClip?.start, previewClip?.src])
+
+  const persistEditor = useCallback((extra: Partial<Project> = {}) => {
+    const p = useProjects.getState().current
+    if (!p) return
+    void useProjects.getState().updateCurrent({
+      elements: [...useEditor.getState().elements],
+      clips: [...useEditor.getState().clips],
+      ...extra,
+    })
+  }, [])
 
   const snapshot = useCallback(() => {
     setHistory((h) => [...h.slice(-29), useEditor.getState().clips.map((c) => ({ ...c }))])
@@ -258,37 +365,110 @@ export default function EditorWorkspace() {
     setStatus('Redid edit')
   }
 
-  const ensureProject = async () => {
+  const ensureProject = async (): Promise<Project> => {
     const existing = useProjects.getState().current
     if (existing) return existing
     return await useProjects.getState().createProject('Studio Project', 'video', aspect)
   }
 
   const addAsset = async (asset: Asset) => {
-    await ensureProject()
+    const p = await ensureProject()
     snapshot()
     const ed = useEditor.getState()
-    const trackId = asset.kind === 'audio' ? 'track-audio'
-      : asset.kind === 'template' || asset.kind === 'image' ? 'track-overlay' : 'track-video'
-    const start = ed.clips.filter((c) => c.trackId === trackId).reduce((max, c) => Math.max(max, c.start + c.duration), 0)
-    const id = ed.addClip({ trackId, start, duration: 3, name: asset.name, src: asset.src })
-    const next = [...useEditor.getState().clips]
-    persistClips(next)
-    setStatus(`Added “${asset.name}” to the ${trackId.replace('track-', '')} track`)
-    if (asset.kind === 'template' || asset.kind === 'image') {
-      const el = ed.addElement({
-        type: asset.kind === 'template' ? 'text' : 'image',
-        name: asset.name,
-        text: asset.kind === 'template' ? asset.name : undefined,
-        src: asset.src,
-        x: 120, y: 120, width: 600, height: 180,
-        fontSize: 52, color: C.purple, opacity: 1,
-      } as Omit<Partial<ProjectElement>, 'id'>)
-      const p = useProjects.getState().current
-      if (p) void useProjects.getState().updateCurrent({ elements: [...useEditor.getState().elements] })
-      void el
+    const nextClips = [...ed.clips]
+    const nextElements = [...ed.elements]
+    let chooseElement: string | undefined
+    let message = ''
+
+    if (asset.kind === 'transition') {
+      if (!selectedClipId) { setStatus('Select a clip on the timeline first'); return }
+      const next = nextClips.map((c) => c.id === selectedClipId ? { ...c, params: { ...(c.params || {}), transition: asset.transition } } : c)
+      persistClips(next)
+      setStatus(`${asset.name} transition applied to selected clip`)
+      return
     }
-    void id
+
+    if (asset.template) {
+      const newElements = asset.template.elements.map((el, i) => fullElement({
+        ...el,
+        name: el.type === 'text' ? `Text: ${(el.text || '').slice(0, 16)}` : `Shape ${i + 1}`,
+      }, Date.now() + i))
+      nextElements.push(...newElements)
+      chooseElement = newElements[0]?.id
+      nextClips.push({
+        id: v4(), trackId: 'track-overlay', start: 0, duration: 6,
+        name: asset.name, src: asset.thumbnail, params: { transition: 'fade' },
+      })
+      message = `“${asset.name}” added with ${newElements.length} editable layers`
+    } else if (asset.kind === 'text' && asset.textPreset) {
+      const preset = asset.textPreset
+      const el = fullElement({
+        type: 'text', name: asset.name, text: preset.text,
+        x: Math.round(p.canvasWidth * 0.1), y: Math.round(p.canvasHeight * (preset.textAlign === 'left' ? 0.72 : 0.42)),
+        width: Math.round(p.canvasWidth * 0.8), height: Math.round(preset.fontSize * 1.5),
+        fontSize: preset.fontSize, color: preset.color, fontWeight: preset.fontWeight,
+        textAlign: preset.textAlign, fontFamily: project?.brand?.font || FONT_OPTIONS[0],
+      }, Date.now())
+      nextElements.push(el)
+      chooseElement = el.id
+      nextClips.push({ id: v4(), trackId: 'track-captions', start: 0, duration: 4, name: preset.text, params: {} })
+      message = `Text layer “${preset.text}” added and selected`
+    } else if (asset.kind === 'shape') {
+      const el = fullElement({
+        type: 'shape', name: asset.name,
+        x: Math.round(p.canvasWidth * 0.35), y: Math.round(p.canvasHeight * 0.38),
+        width: Math.round(p.canvasWidth * 0.3), height: asset.shape === 'line' ? 12 : Math.round(p.canvasWidth * 0.3),
+        fill: color, cornerRadius: asset.shape === 'rect' ? 24 : 0,
+        params: { shape: asset.shape || 'rect' },
+      }, Date.now())
+      nextElements.push(el)
+      chooseElement = el.id
+      const thumb = designToDataUrl({ aspectRatio: p.aspectRatio, background: 'transparent', elements: [el] }, true)
+      nextClips.push({ id: v4(), trackId: 'track-overlay', start: 0, duration: 4, name: asset.name, src: thumb, params: {} })
+      message = `${asset.name} shape added and selected`
+    } else {
+      const trackId = asset.kind === 'audio' ? 'track-audio' : asset.kind === 'video' ? 'track-video' : 'track-overlay'
+      const start = nextClips.filter((c) => c.trackId === trackId).reduce((max, c) => Math.max(max, c.start + c.duration), 0)
+      const fallback = asset.kind === 'audio' ? 10 : asset.kind === 'video' ? 6 : 5
+      const clip: Clip = { id: v4(), trackId, start, duration: fallback, name: asset.name, src: asset.src, params: {} }
+      nextClips.push(clip)
+      message = `“${asset.name}” added to the ${trackId.replace('track-', '')} track`
+
+      if ((asset.kind === 'video' || asset.kind === 'audio') && asset.src) {
+        const probe = document.createElement(asset.kind === 'video' ? 'video' : 'audio')
+        probe.preload = 'metadata'
+        probe.src = asset.src
+        probe.onloadedmetadata = () => {
+          const d = Math.min(120, Math.max(1, Number(probe.duration) || fallback))
+          const current = useEditor.getState().clips.map((c) => c.id === clip.id ? { ...c, duration: d } : c)
+          useEditor.setState({ clips: current })
+          persistEditor()
+        }
+      }
+    }
+
+    useEditor.setState({
+      elements: nextElements,
+      clips: nextClips,
+      selectedElementId: chooseElement,
+      selectedClipId: nextClips[nextClips.length - 1]?.id,
+    })
+    persistEditor()
+    setStatus(message)
+  }
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setStatus(`Uploading ${files.length} file(s)…`)
+    try {
+      for (const file of files) await storeMediaFile(file)
+      await refreshMedia()
+      setStatus(`${files.length} file(s) added to Media`)
+    } catch (error) {
+      setStatus(`Upload failed: ${(error as Error).message}`)
+    }
+    e.target.value = ''
   }
 
   const splitSelected = () => {
@@ -328,36 +508,101 @@ export default function EditorWorkspace() {
     })
   }
 
-  const visibleAssets = media.filter((a) => {
-    const matchPanel =
-      rail === 'media' ? ['image', 'video', 'template'].includes(a.kind)
-      : rail === 'audio' ? a.kind === 'audio'
-      : rail === 'text' ? a.kind === 'template'
-      : rail === 'stock' ? a.kind === 'video'
-      : rail === 'elements' ? a.kind === 'image' || a.kind === 'template'
-      : true
-    return matchPanel && a.name.toLowerCase().includes(query.toLowerCase())
-  })
+  const updateSelectedElement = (patch: Partial<ProjectElement>, message?: string) => {
+    if (!selectedElement) { setStatus('Select a layer in the preview first'); return }
+    useEditor.getState().updateElement(selectedElement.id, patch)
+    persistEditor()
+    if (message) setStatus(message)
+  }
+
+  const patchElementParams = (patch: Record<string, unknown>) => {
+    if (!selectedElement) { setStatus('Select a layer in the preview first'); return }
+    updateSelectedElement({ params: { ...(selectedElement.params || {}), ...patch } })
+  }
+
+  const patchClipParams = (patch: Record<string, unknown>) => {
+    if (!selectedClip) { setStatus('Select a clip on the timeline first'); return }
+    const next = useEditor.getState().clips.map((c) => c.id === selectedClip.id ? { ...c, params: { ...(c.params || {}), ...patch } } : c)
+    persistClips(next)
+  }
+
+  const patchEffects = (patch: Partial<NonNullable<Project['effects']>>) => {
+    persistEditor({ effects: { ...effects, ...patch } })
+  }
+
+  const applyColor = (c: string) => {
+    setColor(c)
+    if (!selectedElement) {
+      persistEditor({ background: c })
+      setStatus(`Canvas background set to ${c}`)
+      return
+    }
+    if (selectedElement.type === 'text') updateSelectedElement({ color: c }, 'Text colour updated')
+    else if (selectedElement.type === 'shape') updateSelectedElement({ fill: c }, 'Shape colour updated')
+    else patchElementParams({ color: c })
+  }
+
+  const applyEffect = (name: string, filter: string) => {
+    patchEffects({ preset: name, filter })
+    setStatus(`${name} filter applied`)
+  }
+
+  const setBrandFontAndApply = (font: string) => {
+    setBrandFont(font)
+    persistEditor({ brand: { colors: brandColors, font } })
+    if (selectedText) updateSelectedElement({ fontFamily: font }, 'Font applied to selected text')
+  }
+
+  const saveBrand = () => {
+    persistEditor({ brand: { colors: brandColors, font: brandFont } })
+    setStatus('Brand kit saved to this project')
+  }
+
+  const assetsByPanel = useMemo<Record<RailPanel, Asset[]>>(() => ({
+    media: [...media, ...templateAssets],
+    stock: templateAssets,
+    audio: media.filter((a) => a.kind === 'audio'),
+    text: TEXT_PRESETS,
+    elements: [...SHAPE_PRESETS, ...templateAssets],
+    transitions: TRANSITION_PRESETS,
+    filters: [],
+    brand: [],
+  }), [media, templateAssets])
+
+  const visibleAssets = assetsByPanel[rail].filter((a) => a.name.toLowerCase().includes(query.toLowerCase()))
 
   const runExport = async () => {
     const p = useProjects.getState().current
     if (!p) { setStatus('Create or open a project before exporting'); return }
     setExporting(true)
     setStatus('Preparing export…')
+    const isJson = exportFormat === 'Project JSON'
+    const format: ExportFormat = exportFormat === 'WebM' ? 'WebM' : exportFormat === 'GIF' ? 'GIF' : 'MP4'
     try {
-      const blob = await exportVideo({ project: { ...p, clips: useEditor.getState().clips }, onProgress: setStatus })
-      const a = document.createElement('a')
-      if (blob) {
-        a.href = URL.createObjectURL(blob)
-        a.download = `${p.name}.${exportFormat.toLowerCase()}`
-        setStatus(`${exportFormat} exported at ${resolution} / ${frameRate}`)
-      } else {
-        const json = new Blob([JSON.stringify({ ...p, clips: useEditor.getState().clips }, null, 2)], { type: 'application/json' })
-        a.href = URL.createObjectURL(json)
-        a.download = `${p.name}.pixelcraft.json`
-        setStatus('Encoder unavailable — exported project JSON instead')
+      const finalProject: Project = {
+        ...p,
+        elements: useEditor.getState().elements,
+        clips: useEditor.getState().clips,
+        effects,
       }
-      a.click()
+      const blob = isJson
+        ? new Blob([JSON.stringify(finalProject, null, 2)], { type: 'application/json' })
+        : await exportVideo({
+          project: finalProject,
+          format,
+          resolution,
+          fps: Number(frameRate.split(' ')[0]) || 30,
+          quality,
+          onProgress: setStatus,
+        })
+      if (!blob) {
+        const json = new Blob([JSON.stringify(finalProject, null, 2)], { type: 'application/json' })
+        triggerDownload(json, `${p.name}.pixelcraft.json`)
+        setStatus('No decodable media — exported project JSON instead')
+      } else {
+        triggerDownload(blob, `${p.name}.${isJson ? 'pixelcraft.json' : format.toLowerCase()}`)
+        setStatus(isJson ? 'Project JSON exported' : `${format} exported at ${resolution} / ${frameRate}`)
+      }
     } catch (error) {
       setStatus(`Export failed: ${(error as Error).message}`)
     } finally {
@@ -370,9 +615,36 @@ export default function EditorWorkspace() {
     else void document.exitFullscreen()
   }
 
+  const onClipPointerDown = (e: React.PointerEvent<HTMLButtonElement>, clip: Clip) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragRef.current = { id: clip.id, startX: e.clientX, originalStart: clip.start }
+    useEditor.getState().setSelectedClip(clip.id)
+  }
+
+  const onClipPointerMove = (e: React.PointerEvent<HTMLButtonElement>, clip: Clip) => {
+    const drag = dragRef.current
+    if (!drag || drag.id !== clip.id) return
+    const nextStart = Math.max(0, drag.originalStart + (e.clientX - drag.startX) / pxPerSecond)
+    const next = useEditor.getState().clips.map((c) => c.id === clip.id ? { ...c, start: nextStart } : c)
+    useEditor.setState({ clips: next })
+  }
+
+  const onClipPointerUp = () => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    persistEditor()
+    setStatus('Clip position updated')
+  }
+
   const rulerTicks = Array.from({ length: Math.floor(duration / 5) + 1 }, (_, i) => i * 5)
-  const pxPerSecond = (58 * zoom) / 5
-  const playheadPercent = Math.min(100, (time / duration) * 100)
+  const stageScale = selectedElement ? 1 : scale
+  const stageRotation = selectedElement ? 0 : rotation
+  const stageOpacity = selectedElement ? 1 : opacity
+  const previewDesign = {
+    aspectRatio: aspect,
+    background: project?.background || '#111318',
+    elements,
+  }
 
   const trackRows: Array<{ id: string; label: string; color: string; clips: Clip[]; kind: string }> = [
     { id: 'track-video', label: 'Video', color: C.purple, clips: clips.filter((c) => c.trackId === 'track-video'), kind: 'video' },
@@ -401,16 +673,20 @@ export default function EditorWorkspace() {
         </div>
 
         <div className="flex items-center gap-1">
-          <IconButton label="Grid layout" onClick={() => setStatus('Grid layout')} active><LayoutGrid className="h-3.5 w-3.5" /></IconButton>
-          <IconButton label="Column layout" onClick={() => setStatus('Column layout')}><Columns2 className="h-3.5 w-3.5" /></IconButton>
-          <IconButton label="Inspector layout" onClick={() => setStatus('Inspector layout')}><PanelRight className="h-3.5 w-3.5" /></IconButton>
-          <IconButton label="Preview monitor" onClick={() => setStatus('Preview monitor')}><Monitor className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label="Grid layout" onClick={() => setStatus('Grid layout active')} active><LayoutGrid className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label="Column layout" onClick={() => setStatus('Column layout active')}><Columns2 className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label="Inspector layout" onClick={() => setStatus('Inspector layout active')}><PanelRight className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label="Preview monitor" onClick={() => setStatus('Preview monitor active')}><Monitor className="h-3.5 w-3.5" /></IconButton>
           <span className="mx-1 h-5 w-px" style={{ background: C.border }} />
           {ASPECTS.map((a) => (
             <button
               key={a}
               type="button"
-              onClick={() => { setAspect(a); void useProjects.getState().updateCurrent({ aspectRatio: a }) }}
+              onClick={() => {
+                setAspect(a)
+                void useProjects.getState().updateCurrent({ aspectRatio: a })
+                setStatus(`Canvas set to ${a}`)
+              }}
               className="rounded px-1.5 py-1 text-[10px] font-semibold transition"
               style={{ background: aspect === a ? `${C.purple}33` : 'transparent', color: aspect === a ? C.cyan : C.muted, border: aspect === a ? `1px solid ${C.purple}` : '1px solid transparent' }}
             >
@@ -460,70 +736,101 @@ export default function EditorWorkspace() {
         {/* 3. Left media browser — 260px */}
         <aside className="flex w-[260px] shrink-0 flex-col" style={{ background: C.panel, borderRight: `1px solid ${C.border}` }}>
           <div className="border-b p-3" style={{ borderColor: C.border }}>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="font-display text-sm font-semibold capitalize">{rail}</h2>
               <span className="text-[10px]" style={{ color: C.muted }}>{visibleAssets.length} items</span>
             </div>
+            {(rail === 'media' || rail === 'audio') && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-[10px] font-semibold"
+                style={{ background: `${C.purple}26`, color: C.cyan, border: `1px solid ${C.purple}` }}
+              >
+                <Upload className="h-3 w-3" /> Upload media
+              </button>
+            )}
+            <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*" hidden onChange={(e) => void handleUpload(e)} />
             <div className="flex items-center gap-2 rounded-lg px-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
               <Search className="h-3.5 w-3.5" style={{ color: C.muted }} />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search media"
+                placeholder="Search assets"
                 className="h-8 w-full bg-transparent text-[11px] outline-none"
                 style={{ color: C.text }}
               />
             </div>
           </div>
+
           <div className="flex-1 overflow-y-auto p-3">
             {rail === 'brand' ? (
               <div className="space-y-3">
                 <div className="rounded-xl p-4" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
                   <Palette className="mb-2 h-5 w-5" style={{ color: C.cyan }} />
                   <p className="text-xs font-semibold">Brand Kit</p>
-                  <p className="mt-1 text-[10px]" style={{ color: C.muted }}>Colors, fonts and logos for this workspace.</p>
-                  <div className="mt-3 flex gap-1.5">
-                    {[C.purple, C.cyan, '#22c55e', '#f59e0b'].map((c) => <span key={c} className="h-5 w-5 rounded" style={{ background: c }} />)}
+                  <p className="mt-1 text-[10px]" style={{ color: C.muted }}>Colours and font are saved to this project.</p>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {brandColors.map((c) => (
+                      <button key={c} type="button" onClick={() => applyColor(c)} className="h-6 w-6 rounded" style={{ background: c, border: color === c ? `2px solid ${C.cyan}` : `1px solid ${C.border}` }} title={`Apply ${c}`} />
+                    ))}
+                    <button type="button" onClick={() => setBrandColors((prev) => [...prev, color])} className="h-6 w-6 rounded text-xs" style={{ background: C.panel2, color: C.cyan, border: `1px dashed ${C.purple}` }} title="Add current colour">+</button>
                   </div>
+                  <select value={brandFont} onChange={(e) => setBrandFontAndApply(e.target.value)} className="mt-3 h-8 w-full rounded px-2 text-[11px] outline-none" style={{ background: C.bg, color: C.text, border: `1px solid ${C.border}` }}>
+                    {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f.split(',')[0].replace(/'/g, '')}</option>)}
+                  </select>
                 </div>
-                <button type="button" onClick={() => setStatus('Brand kit saved')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: `${C.purple}26`, color: C.cyan }}>
+                <button type="button" onClick={saveBrand} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: `${C.purple}26`, color: C.cyan }}>
                   <Check className="h-3.5 w-3.5" /> Save brand preset
                 </button>
               </div>
-            ) : visibleAssets.length ? (
+            ) : rail === 'filters' ? (
               <div className="grid grid-cols-2 gap-2">
-                {visibleAssets.map((asset) => (
-                  <div key={asset.id} className="group relative overflow-hidden rounded-lg" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
-                    <button type="button" onClick={() => void addAsset(asset)} className="block w-full text-left" title={`Add ${asset.name} to timeline`}>
-                      <div className="relative flex h-16 items-center justify-center" style={{ background: asset.gradient }}>
-                        {asset.kind === 'audio' ? <Music2 className="h-6 w-6 text-white/80" /> : <ImageIcon className="h-6 w-6 text-white/80" />}
-                        <span className="absolute bottom-1 left-1 rounded px-1 text-[8px] font-bold text-white/80" style={{ background: '#0008' }}>{asset.label}</span>
-                      </div>
-                      <p className="truncate px-2 py-1.5 text-[10px]" style={{ color: C.text }}>{asset.name}</p>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleFavorite(asset.id)}
-                      className="absolute right-1 top-1 rounded p-1"
-                      style={{ background: '#0007', color: favorites.has(asset.id) ? '#fbbf24' : '#ffffffaa' }}
-                      title={favorites.has(asset.id) ? 'Remove favorite' : 'Add favorite'}
-                    >
-                      <Star className="h-3 w-3" fill={favorites.has(asset.id) ? 'currentColor' : 'none'} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void addAsset(asset)}
-                      className="absolute bottom-7 right-1 rounded p-1 text-white"
-                      style={{ background: C.purple }}
-                      title="Add to timeline"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  </div>
+                {EFFECTS.map((fx) => (
+                  <button
+                    key={fx.name}
+                    type="button"
+                    onClick={() => applyEffect(fx.name, fx.filter)}
+                    className="rounded-lg py-3 text-[10px] font-semibold"
+                    style={{ background: effects.preset === fx.name ? `${C.purple}44` : C.stage, color: effects.preset === fx.name ? C.cyan : C.muted, border: `1px solid ${effects.preset === fx.name ? C.purple : C.border}` }}
+                  >
+                    {fx.name}
+                  </button>
                 ))}
               </div>
+            ) : visibleAssets.length ? (
+              <div className="grid grid-cols-2 gap-2">
+                {visibleAssets.map((asset) => {
+                  const Icon = asset.kind === 'audio' ? Music2 : asset.kind === 'video' ? Video : asset.kind === 'text' ? Type : asset.kind === 'shape' ? Shapes : asset.kind === 'transition' ? Sparkles : ImageIcon
+                  return (
+                    <div key={asset.id} className="group relative overflow-hidden rounded-lg" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
+                      <button type="button" onClick={() => void addAsset(asset)} className="block w-full text-left" title={`Add ${asset.name}`}>
+                        <div className="relative flex h-16 items-center justify-center overflow-hidden" style={{ background: asset.gradient || C.stage }}>
+                          {asset.thumbnail ? <img src={asset.thumbnail} alt="" className="h-full w-full object-cover" /> : <Icon className="h-6 w-6 text-white/80" />}
+                          <span className="absolute bottom-1 left-1 rounded px-1 text-[8px] font-bold text-white/80" style={{ background: '#0008' }}>{asset.label}</span>
+                        </div>
+                        <p className="truncate px-2 py-1.5 text-[10px]" style={{ color: C.text }}>{asset.name}</p>
+                      </button>
+                      {asset.kind !== 'transition' && asset.kind !== 'text' && asset.kind !== 'shape' && (
+                        <button
+                          type="button"
+                          onClick={() => toggleFavorite(asset.id)}
+                          className="absolute right-1 top-1 rounded p-1"
+                          style={{ background: '#0007', color: favorites.has(asset.id) ? '#fbbf24' : '#ffffffaa' }}
+                          title={favorites.has(asset.id) ? 'Remove favourite' : 'Add favourite'}
+                        >
+                          <Star className="h-3 w-3" fill={favorites.has(asset.id) ? 'currentColor' : 'none'} />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             ) : (
-              <p className="mt-8 text-center text-[11px]" style={{ color: C.muted }}>No assets match “{query}”.</p>
+              <div className="mt-8 text-center text-[11px]" style={{ color: C.muted }}>
+                <p>No assets found.</p>
+                {(rail === 'media' || rail === 'audio') && <p className="mt-2">Upload a file above to add real media.</p>}
+              </div>
             )}
           </div>
         </aside>
@@ -543,28 +850,37 @@ export default function EditorWorkspace() {
                 width: aspect === '16:9' ? 'min(100%, 42rem)' : 'auto',
                 maxWidth: '100%',
                 border: `1px solid ${C.border}`,
-                transform: `scale(${scale}) rotate(${rotation}deg)`,
-                opacity,
-                filter: effect === 'B&W' ? 'grayscale(1)' : effect === 'Blur' ? 'blur(2px)' : effect === 'Neon' ? 'saturate(1.8) contrast(1.2)' : 'none',
+                transform: `scale(${stageScale}) rotate(${stageRotation}deg)`,
+                opacity: stageOpacity,
+                filter: filterString,
               }}
             >
-              {activeClip?.src ? (
-                <video ref={videoRef} src={activeClip.src} className="h-full w-full object-cover" muted={volume === 0} playsInline />
-              ) : null}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
-                <Wand2 className="h-8 w-8 opacity-60" style={{ color: C.cyan }} />
-                <p className="px-4 text-sm font-semibold" style={{ color: C.text }}>{project?.name || 'Studio preview'}</p>
-                <p className="text-[10px]" style={{ color: C.muted }}>{aspect} · {clips.length} clips on timeline</p>
-              </div>
-              {elements.filter((el) => !el.hidden && el.text).slice(0, 3).map((el) => (
-                <div
-                  key={el.id}
-                  className="absolute truncate px-2 text-center font-display font-bold"
-                  style={{ left: `${Math.min(90, (el.x / (project?.canvasWidth || 1080)) * 100)}%`, top: `${Math.min(90, (el.y / (project?.canvasHeight || 1920)) * 100)}%`, color: el.color || C.cyan, fontSize: Math.max(10, (el.fontSize || 48) / 6), opacity: el.opacity ?? 1 }}
-                >
-                  {el.text}
+              {previewClip?.src && (
+                previewClip.src.startsWith('data:image') ? (
+                  <img src={previewClip.src} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                ) : (
+                  <video ref={videoRef} src={previewClip.src} className="absolute inset-0 h-full w-full object-cover" muted={volume === 0} playsInline />
+                )
+              )}
+              <DesignPreview
+                design={previewDesign}
+                transparent={!!previewClip}
+                interactive
+                selectedElementId={selectedElementId}
+                onElementClick={(id) => {
+                  useEditor.getState().setSelectedElementId(id)
+                  const el = elements.find((e) => e.id === id)
+                  setTab(el?.type === 'text' ? 'Text' : 'Video')
+                }}
+                className="absolute inset-0 h-full w-full"
+              />
+              {!previewClip && elements.length === 0 && (
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+                  <Wand2 className="h-8 w-8 opacity-60" style={{ color: C.cyan }} />
+                  <p className="text-sm font-semibold">Empty canvas</p>
+                  <p className="px-6 text-[10px]" style={{ color: C.muted }}>Add media, a shape or a real template from the left rail.</p>
                 </div>
-              ))}
+              )}
             </div>
 
             {/* Transport controls */}
@@ -572,7 +888,11 @@ export default function EditorWorkspace() {
               <IconButton label="Skip back 5s" onClick={() => useEditor.getState().setTime(Math.max(0, time - 5))}><SkipBack className="h-3.5 w-3.5" /></IconButton>
               <button
                 type="button"
-                onClick={() => { useEditor.getState().togglePlay(); if (videoRef.current) { if (playing) videoRef.current.pause(); else void videoRef.current.play() } }}
+                onClick={() => {
+                  useEditor.getState().togglePlay()
+                  const v = videoRef.current
+                  if (v) { if (playing) v.pause(); else void v.play().catch(() => {}) }
+                }}
                 className="flex h-7 w-7 items-center justify-center rounded-full text-black"
                 style={{ background: `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }}
                 title={playing ? 'Pause' : 'Play'}
@@ -615,9 +935,9 @@ export default function EditorWorkspace() {
                   <div key={row.id} className="flex h-9 items-center gap-1 px-2" style={{ borderBottom: `1px solid ${C.border}` }}>
                     <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: row.color }} />
                     <span className="flex-1 truncate text-[10px]" style={{ color: C.text }}>{row.label}</span>
-                    <IconButton label={`Lock ${row.label} track`} onClick={() => setStatus(`${row.label} track lock toggled`)}><Lock className="h-3 w-3" /></IconButton>
-                    <IconButton label={`Hide ${row.label} track`} onClick={() => setStatus(`${row.label} track visibility toggled`)}><Eye className="h-3 w-3" /></IconButton>
-                    <IconButton label={`Mute ${row.label} track`} onClick={() => setStatus(`${row.label} track mute toggled`)}><VolumeX className="h-3 w-3" /></IconButton>
+                    <IconButton label={`${row.label} track options`} onClick={() => setStatus(`${row.label} track selected`)}><Lock className="h-3 w-3" /></IconButton>
+                    <IconButton label={`Preview ${row.label} track`} onClick={() => setStatus(`${row.label} track previewed`)}><Eye className="h-3 w-3" /></IconButton>
+                    <IconButton label={`Audio options for ${row.label}`} onClick={() => setStatus(`${row.label} audio options`)}><VolumeX className="h-3 w-3" /></IconButton>
                   </div>
                 ))}
               </div>
@@ -636,14 +956,16 @@ export default function EditorWorkspace() {
                   {trackRows.map((row) => (
                     <div key={row.id} className="relative h-9" style={{ borderBottom: `1px solid ${C.border}` }}>
                       {row.clips.length === 0 && (
-                        <span className="absolute left-2 top-2 text-[9px]" style={{ color: '#ffffff24' }}>Drop {row.label.toLowerCase()} here</span>
+                        <span className="absolute left-2 top-2 text-[9px]" style={{ color: '#ffffff24' }}>Add an asset to this track</span>
                       )}
                       {row.clips.map((clip) => (
                         <button
                           key={clip.id}
                           type="button"
-                          onClick={() => useEditor.getState().setSelectedClip(clip.id)}
-                          className="absolute top-1 flex h-7 items-center gap-1 overflow-hidden rounded px-1.5 text-left text-[9px] transition"
+                          onPointerDown={(e) => onClipPointerDown(e, clip)}
+                          onPointerMove={(e) => onClipPointerMove(e, clip)}
+                          onPointerUp={onClipPointerUp}
+                          className="absolute top-1 flex h-7 touch-none items-center gap-1 overflow-hidden rounded px-1.5 text-left text-[9px] transition"
                           style={{
                             left: clip.start * pxPerSecond,
                             width: Math.max(28, clip.duration * pxPerSecond),
@@ -651,7 +973,7 @@ export default function EditorWorkspace() {
                             border: `1px solid ${selectedClipId === clip.id ? C.cyan : row.color}`,
                             color: C.text,
                           }}
-                          title={`${clip.name || 'Clip'} · ${fmtTime(clip.start)} → ${fmtTime(clip.start + clip.duration)}`}
+                          title={`${clip.name || 'Clip'} · ${fmtTime(clip.start)} → ${fmtTime(clip.start + clip.duration)} · drag to move`}
                         >
                           {row.kind === 'audio' ? (
                             <span className="flex h-4 flex-1 items-center gap-px">
@@ -663,7 +985,7 @@ export default function EditorWorkspace() {
                             <>
                               <span className="flex h-5 w-6 shrink-0 items-center justify-center rounded-sm" style={{ background: 'linear-gradient(135deg,#3b1d6e,#00e5ff)' }}><Video className="h-3 w-3" /></span>
                               <span className="truncate">{clip.name || 'Clip'}</span>
-                              <Sparkles className="ml-auto h-2.5 w-2.5 shrink-0" style={{ color: C.cyan }} />
+                              {clip.params?.transition ? <Sparkles className="ml-auto h-2.5 w-2.5 shrink-0" style={{ color: C.cyan }} /> : null}
                             </>
                           )}
                         </button>
@@ -697,44 +1019,110 @@ export default function EditorWorkspace() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <Section title="Transform" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
-              <Slider label="Scale" value={scale} min={0.4} max={2} step={0.05} onChange={setScale} />
-              <Slider label="Position X" value={Math.round((elements[0]?.x || 120))} min={0} max={1920} onChange={(v) => { const el = elements[0]; if (el) useEditor.getState().updateElement(el.id, { x: v }) }} />
-              <Slider label="Position Y" value={Math.round((elements[0]?.y || 120))} min={0} max={1080} onChange={(v) => { const el = elements[0]; if (el) useEditor.getState().updateElement(el.id, { y: v }) }} />
-              <Slider label="Rotation" value={rotation} min={-180} max={180} suffix="°" onChange={setRotation} />
-            </Section>
+            {(tab === 'Video' || tab === 'Text' || tab === 'Adjust') && (
+              <Section title="Transform" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
+                <p className="text-[9px]" style={{ color: C.muted }}>
+                  {selectedElement ? `Editing layer: ${selectedElement.name}` : 'No layer selected — changes affect the whole preview.'}
+                </p>
+                <Slider label="Scale" value={selectedElement ? Number(selectedElement.params?.scale || 1) : scale} min={0.4} max={2} step={0.05} onChange={(v) => {
+                  if (selectedElement) patchElementParams({ scale: v })
+                  else setScale(v)
+                }} />
+                <Slider label="Position X" value={Math.round(selectedElement?.x ?? 120)} min={0} max={project?.canvasWidth || 1920} onChange={(v) => updateSelectedElement({ x: v })} disabled={!selectedElement} />
+                <Slider label="Position Y" value={Math.round(selectedElement?.y ?? 120)} min={0} max={project?.canvasHeight || 1080} onChange={(v) => updateSelectedElement({ y: v })} disabled={!selectedElement} />
+                <Slider label="Rotation" value={selectedElement ? Number(selectedElement.params?.rotation || 0) : rotation} min={-180} max={180} suffix="°" onChange={(v) => {
+                  if (selectedElement) patchElementParams({ rotation: v })
+                  else setRotation(v)
+                }} />
+              </Section>
+            )}
 
-            <Section title="Colors" icon={<Palette className="h-3.5 w-3.5" />}>
+            {tab === 'Text' && (
+              <Section title="Text Content" icon={<Type className="h-3.5 w-3.5" />}>
+                {selectedText ? (
+                  <>
+                    <textarea
+                      value={selectedText.text || ''}
+                      onChange={(e) => updateSelectedElement({ text: e.target.value })}
+                      rows={3}
+                      className="w-full resize-none rounded-lg p-2 text-[11px] outline-none"
+                      style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                    />
+                    <Slider label="Font size" value={selectedText.fontSize || 64} min={16} max={220} onChange={(v) => updateSelectedElement({ fontSize: v })} />
+                    <div className="flex gap-1">
+                      <IconButton label="Bold" active={Number(selectedText.fontWeight || 0) >= 700} onClick={() => updateSelectedElement({ fontWeight: Number(selectedText.fontWeight || 0) >= 700 ? 500 : 800 })}><Bold className="h-3.5 w-3.5" /></IconButton>
+                      {([['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight]] as const).map(([align, Icon]) => (
+                        <IconButton key={align} label={`Align ${align}`} active={selectedText.textAlign === align} onClick={() => updateSelectedElement({ textAlign: align })}><Icon className="h-3.5 w-3.5" /></IconButton>
+                      ))}
+                    </div>
+                    <select value={selectedText.fontFamily || brandFont} onChange={(e) => updateSelectedElement({ fontFamily: e.target.value })} className="h-8 w-full rounded px-2 text-[11px] outline-none" style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}>
+                      {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f.split(',')[0].replace(/'/g, '')}</option>)}
+                    </select>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => void addAsset(TEXT_PRESETS[0])} className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-[11px]" style={{ background: `${C.purple}26`, color: C.cyan, border: `1px solid ${C.purple}` }}>
+                    <Plus className="h-3.5 w-3.5" /> Add a text layer
+                  </button>
+                )}
+              </Section>
+            )}
+
+            {(tab === 'Video' || tab === 'Adjust') && (
+              <Section title="Effects" icon={<Wand2 className="h-3.5 w-3.5" />}>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {EFFECTS.map((fx) => (
+                    <button key={fx.name} type="button" onClick={() => applyEffect(fx.name, fx.filter)} className="rounded-md py-2 text-[8px] transition" style={{ background: effects.preset === fx.name ? `${C.purple}44` : C.stage, color: effects.preset === fx.name ? C.cyan : C.muted, border: `1px solid ${effects.preset === fx.name ? C.purple : C.border}` }} title={fx.name}>
+                      <span className="mx-auto mb-1 block h-4 w-4 rounded" style={{ background:fx.filter === 'none' ? C.border : `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }} />
+                      {fx.name}
+                    </button>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {tab === 'Adjust' && (
+              <Section title="Colour Grading" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
+                <Slider label="Brightness" value={effects.brightness ?? 1} min={0.2} max={2} step={0.05} onChange={(v) => patchEffects({ brightness: v })} />
+                <Slider label="Contrast" value={effects.contrast ?? 1} min={0.2} max={2} step={0.05} onChange={(v) => patchEffects({ contrast: v })} />
+                <Slider label="Saturation" value={effects.saturation ?? 1} min={0} max={2} step={0.05} onChange={(v) => patchEffects({ saturation: v })} />
+                <button type="button" onClick={() => patchEffects({ brightness: 1, contrast: 1, saturation: 1, filter: 'none', preset: 'None' })} className="w-full rounded py-1.5 text-[10px]" style={{ background: C.stage, color: C.muted, border: `1px solid ${C.border}` }}>Reset grading</button>
+              </Section>
+            )}
+
+            <Section title="Colours" icon={<Palette className="h-3.5 w-3.5" />}>
               <div className="h-4 w-full rounded-full" style={{ background: `linear-gradient(90deg, ${C.purple}, ${C.cyan}, #22c55e, #fbbf24, #f43f5e)` }} />
               <div className="flex flex-wrap gap-1.5">
                 {[C.purple, C.cyan, '#22c55e', '#fbbf24', '#f43f5e', '#ffffff'].map((c) => (
-                  <button key={c} type="button" onClick={() => setColor(c)} className="h-5 w-5 rounded-md" style={{ background: c, border: color === c ? `2px solid ${C.text}` : `1px solid ${C.border}` }} title={c} />
+                  <button key={c} type="button" onClick={() => applyColor(c)} className="h-5 w-5 rounded-md" style={{ background: c, border: color === c ? `2px solid ${C.text}` : `1px solid ${C.border}` }} title={`Apply ${c}`} />
                 ))}
               </div>
             </Section>
 
-            <Section title="Speed" icon={<Gauge className="h-3.5 w-3.5" />}>
-              <Slider label="Playback speed" value={speed} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => { setSpeed(v); useEditor.getState().setPlaybackRate(v) }} />
-              <div className="flex gap-1">
-                {[0.5, 1, 1.5, 2].map((r) => (
-                  <button key={r} type="button" onClick={() => { setSpeed(r); useEditor.getState().setPlaybackRate(r) }} className="flex-1 rounded py-1 text-[9px]" style={{ background: speed === r ? `${C.purple}44` : C.stage, color: speed === r ? C.cyan : C.muted, border: `1px solid ${C.border}` }}>{r}×</button>
-                ))}
-              </div>
-            </Section>
+            {(tab === 'Video' || tab === 'Audio') && (
+              <Section title="Playback" icon={<Gauge className="h-3.5 w-3.5" />}>
+                <Slider label="Playback speed" value={speed} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => { setSpeed(v); useEditor.getState().setPlaybackRate(v) }} />
+                <div className="flex gap-1">
+                  {[0.5, 1, 1.5, 2].map((r) => (
+                    <button key={r} type="button" onClick={() => { setSpeed(r); useEditor.getState().setPlaybackRate(r) }} className="flex-1 rounded py-1 text-[9px]" style={{ background: speed === r ? `${C.purple}44` : C.stage, color: speed === r ? C.cyan : C.muted, border: `1px solid ${C.border}` }}>{r}×</button>
+                  ))}
+                </div>
+              </Section>
+            )}
 
-            <Section title="Effects" icon={<Wand2 className="h-3.5 w-3.5" />}>
-              <div className="grid grid-cols-4 gap-1.5">
-                {EFFECTS.map((name) => (
-                  <button key={name} type="button" onClick={() => setEffect(name)} className="rounded-md py-2 text-[8px] transition" style={{ background: effect === name ? `${C.purple}44` : C.stage, color: effect === name ? C.cyan : C.muted, border: `1px solid ${effect === name ? C.purple : C.border}` }} title={name}>
-                    {name === 'B&W' ? <span className="mx-auto mb-1 block h-4 w-4 rounded bg-gradient-to-br from-white to-black" /> : <span className="mx-auto mb-1 block h-4 w-4 rounded" style={{ background: `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }} />}
-                    {name}
-                  </button>
-                ))}
-              </div>
-            </Section>
+            {tab === 'Audio' && (
+              <Section title="Audio Mix" icon={<Volume2 className="h-3.5 w-3.5" />}>
+                <Slider label="Master volume" value={volume} min={0} max={1} step={0.05} onChange={(v) => useEditor.getState().setVolume(v)} />
+                <Slider label="Fade in" value={Number(selectedClip?.params?.fadeIn || 0)} min={0} max={10} step={0.5} suffix="s" onChange={(v) => patchClipParams({ fadeIn: v })} disabled={!selectedClip} />
+                <Slider label="Fade out" value={Number(selectedClip?.params?.fadeOut || 0)} min={0} max={10} step={0.5} suffix="s" onChange={(v) => patchClipParams({ fadeOut: v })} disabled={!selectedClip} />
+                <p className="text-[9px]" style={{ color: C.muted }}>{selectedClip ? `Editing clip: ${selectedClip.name || 'Clip'}` : 'Select an audio clip on the timeline.'}</p>
+              </Section>
+            )}
 
             <Section title="Opacity" icon={<Eye className="h-3.5 w-3.5" />}>
-              <Slider label="Opacity" value={opacity} min={0} max={1} step={0.05} onChange={setOpacity} />
+              <Slider label="Opacity" value={selectedElement ? (selectedElement.opacity ?? 1) : opacity} min={0} max={1} step={0.05} onChange={(v) => {
+                if (selectedElement) updateSelectedElement({ opacity: v })
+                else setOpacity(v)
+              }} />
             </Section>
 
             <Section title="Export Settings" icon={<Download className="h-3.5 w-3.5" />}>
@@ -770,11 +1158,21 @@ export default function EditorWorkspace() {
             </Section>
 
             <div className="flex items-center gap-2 px-3 py-3 text-[10px]" style={{ color: C.muted }}>
-              <Crop className="h-3.5 w-3.5" style={{ color: C.cyan }} /> {activeClip ? `Editing: ${activeClip.name || 'Clip'}` : 'Select a clip to edit its properties'}
+              <Crop className="h-3.5 w-3.5" style={{ color: C.cyan }} />
+              {selectedElement ? `Editing: ${selectedElement.name}` : selectedClip ? `Editing: ${selectedClip.name || 'Clip'}` : 'Select a layer or clip to edit its properties'}
             </div>
           </div>
         </aside>
       </div>
     </div>
   )
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

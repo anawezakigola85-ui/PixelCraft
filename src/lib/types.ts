@@ -51,6 +51,8 @@ export interface Clip {
   name?: string
   /** pre-set playback rate (preview only) */
   rate?: number
+  /** transition / fade settings applied by the studio */
+  params?: Record<string, unknown>
 }
 
 export interface Track {
@@ -76,6 +78,15 @@ export interface Project {
   elements: ProjectElement[]
   clips: Clip[]
   tracks: Track[]
+  /** Studio colour grading and saved brand kit. */
+  effects?: {
+    preset?: string
+    filter?: string
+    brightness?: number
+    contrast?: number
+    saturation?: number
+  }
+  brand?: { colors: string[]; font: string }
 }
 
 export interface MediaItem {
