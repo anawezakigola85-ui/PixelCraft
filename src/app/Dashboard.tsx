@@ -8,7 +8,6 @@ import Logo from '../components/ui/Logo'
 import LogoBackdrop from '../components/ui/LogoBackdrop'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
-import { Dialog, DialogFooter } from '../components/ui/Dialog'
 import { navigate } from './Router'
 import { useProjects } from '../store/projectsStore'
 import { useUI } from '../store/ui'
@@ -17,24 +16,15 @@ import { ProjectCard } from './ProjectCard'
 import DesignPreview from '../components/ui/DesignPreview'
 import { TEMPLATES } from '../data/templates'
 import { applyTemplate } from '../lib/templates'
-import { getAllMedia } from '../lib/projects'
-import type { Project, ProjectType, AspectRatio } from '../lib/types'
+import { getAllMedia, nextProjectName } from '../lib/projects'
+import type { Project } from '../lib/types'
 
-const NEW_PROJECT_OPTIONS: Array<{ type: ProjectType; label: string; icon: typeof Monitor }> = [
-  { type: 'image', label: 'Image Design', icon: Monitor },
-  { type: 'video', label: 'Video Editing', icon: Sparkles },
-  { type: 'graphics', label: 'Graphic Design Studio', icon: LayoutGrid },
-  { type: 'social', label: 'Social Media Templates', icon: Monitor },
-]
-
-const ASPECT_OPTIONS: AspectRatio[] = ['16:9', '9:16', '1:1', '4:5']
-
-const NAV: Array<{ label: string; icon: typeof Home; path?: string; action?: 'new' }> = [
+const NAV: Array<{ label: string; icon: typeof Home; path: string }> = [
   { label: 'Home', icon: Home, path: '/' },
   { label: 'Templates', icon: LayoutGrid, path: '/templates' },
   { label: 'Create with AI', icon: Sparkles, path: '/ai' },
   { label: 'Video Studio', icon: Film, path: '/workspace' },
-  { label: 'Design Studio', icon: Monitor, action: 'new' },
+  { label: 'Design Studio', icon: Monitor, path: '/workspace' },
   { label: 'More tools', icon: Layers, path: '/tools' },
 ]
 
@@ -61,10 +51,7 @@ export default function Dashboard() {
   const { searchQuery, setSearchQuery } = useUI()
   const { session } = useAuth()
   const greetingName = session?.name || session?.email || ''
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [type, setType] = useState<ProjectType>('image')
-  const [aspect, setAspect] = useState<AspectRatio>('16:9')
+  const [creating, setCreating] = useState(false)
   const [mediaCount, setMediaCount] = useState(0)
 
   useEffect(() => {
@@ -86,12 +73,17 @@ export default function Dashboard() {
   const recent = useMemo(() => [...filtered].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4), [filtered])
   const saved = useMemo(() => [...filtered].sort((a, b) => a.updatedAt - b.updatedAt).slice(4, 16), [filtered])
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const project = await createProject(name.trim() || 'Untitled', type, aspect)
-    setOpen(false)
-    setName('')
-    navigate(`/editor/${project.id}`)
+  // One click: auto-name the project and jump straight into Pro Studio.
+  const handleQuickCreate = async () => {
+    if (creating) return
+    setCreating(true)
+    try {
+      await createProject(nextProjectName(projects), 'video', '9:16')
+      navigate('/workspace')
+    } catch {
+      window.alert('Could not create the project. Please try again.')
+      setCreating(false)
+    }
   }
 
   const handleOpen = (id: string) => {
@@ -124,7 +116,7 @@ export default function Dashboard() {
               return (
                 <button
                   key={item.label}
-                  onClick={() => (item.action === 'new' ? setOpen(true) : navigate(item.path || '/'))}
+                  onClick={() => navigate(item.path)}
                   className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] transition hover:bg-white/10 hover:text-[var(--color-text)]"
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -173,9 +165,13 @@ export default function Dashboard() {
               </div>
             )}
             <div className="flex flex-wrap gap-3 pt-2">
-              <Button onClick={() => setOpen(true)} className="brand-gradient text-black h-11 px-6">
+              <Button
+                onClick={() => void handleQuickCreate()}
+                disabled={creating}
+                className="brand-gradient text-black h-11 px-6"
+              >
                 <Plus className="h-4 w-4" />
-                Create project
+                {creating ? 'Opening Studio…' : 'Create project'}
               </Button>
               <Button variant="outline" onClick={() => navigate('/ai')}>
                 <Sparkles className="h-4 w-4" />
@@ -320,57 +316,6 @@ export default function Dashboard() {
           </section>
         )}
       </main>
-
-      {/* New Project dialog */}
-      <Dialog open={open} onClose={() => setOpen(false)} title="New Project" description="Create a new design project">
-        <form onSubmit={(e) => void handleCreate(e)} className="space-y-4">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Project name"
-            autoFocus
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs text-[var(--color-text-muted)] flex flex-col gap-1">
-              Type
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as ProjectType)}
-                className="h-9 rounded-lg bg-[var(--color-panel)] border border-[var(--color-border)] px-2"
-              >
-                {NEW_PROJECT_OPTIONS.map((o) => (
-                  <option key={o.type} value={o.type}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs text-[var(--color-text-muted)] flex flex-col gap-1">
-              Aspect
-              <select
-                value={aspect}
-                onChange={(e) => setAspect(e.target.value as AspectRatio)}
-                className="h-9 rounded-lg bg-[var(--color-panel)] border border-[var(--color-border)] px-2"
-              >
-                {ASPECT_OPTIONS.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">
-              <Plus className="h-4 w-4" />
-              Create Project
-            </Button>
-          </DialogFooter>
-        </form>
-      </Dialog>
     </div>
   )
 }

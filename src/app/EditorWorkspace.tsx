@@ -12,6 +12,7 @@ import DesignPreview from '../components/ui/DesignPreview'
 import { navigate } from './Router'
 import { useEditor } from '../store/editor'
 import { useProjects, storeMediaFile } from '../store/projectsStore'
+import { nextProjectName } from '../lib/projects'
 import { useAuth } from '../store/authStore'
 import { getAllMedia } from '../lib/projects'
 import { exportVideo, type ExportFormat } from '../lib/exportVideo'
@@ -299,7 +300,11 @@ export default function EditorWorkspace() {
       const opened = useProjects.getState().current
       if (opened) return opened
     }
-    return await useProjects.getState().createProject('Studio Project', 'video', '9:16')
+    return await useProjects.getState().createProject(
+      nextProjectName(useProjects.getState().projects),
+      'video',
+      '9:16',
+    )
   }, [])
 
   useEffect(() => {

@@ -21,6 +21,14 @@ export const CANVAS_BY_TYPE: Record<ProjectType, { w: number; h: number }> = {
   social: { w: 1080, h: 1080 },
 }
 
+/** Picks the next free "Project N" name so new projects never collide. */
+export function nextProjectName(projects: Array<{ name: string }>): string {
+  const used = new Set(projects.map((p) => p.name.trim().toLowerCase()))
+  let n = 1
+  while (used.has(`project ${n}`)) n += 1
+  return `Project ${n}`
+}
+
 export function newProject(
   name: string,
   type: ProjectType,
