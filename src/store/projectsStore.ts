@@ -120,8 +120,9 @@ export const useProjects = create<ProjectsStore>()((set, get) => ({
 
 /** Store a media file via the projects store (persistence passthrough). */
 export async function storeMediaFile(file: File): Promise<string> {
-  const { saveMedia, fileToDataURL, makeImportName } = await import('../lib/projects')
+  const { saveMedia, fileToDataURL, makeImportName, createVideoThumbnail } = await import('../lib/projects')
   const dataUrl = await fileToDataURL(file)
-  const item = await saveMedia(makeImportName(file), file.type, dataUrl, await currentUserId())
+  const thumbnail = file.type.startsWith('video') ? await createVideoThumbnail(dataUrl) : dataUrl
+  const item = await saveMedia(makeImportName(file), file.type, dataUrl, await currentUserId(), thumbnail)
   return item.id
 }

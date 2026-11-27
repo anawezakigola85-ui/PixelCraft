@@ -105,11 +105,67 @@ export async function searchProjects(query: string, projects: Project[]): Promis
 }
 
 /** Store media (files) in IndexedDB. Small files use base64 data URLs. */
-export async function saveMedia(name: string, type: string, dataUrl: string, ownerId?: string): Promise<MediaItem> {
+export async function saveMedia(
+  name: string,
+  type: string,
+  dataUrl: string,
+  ownerId?: string,
+  thumbnail?: string,
+): Promise<MediaItem> {
   const id = v4()
-  const item: MediaItem = { id, ownerId, name, type, size: Math.floor(dataUrl.length * 0.75), createdAt: Date.now(), src: dataUrl }
+  const item: MediaItem = {
+    id, ownerId, name, type,
+    size: Math.floor(dataUrl.length * 0.75),
+    createdAt: Date.now(),
+    src: dataUrl,
+    thumbnail,
+  }
   await db.put('media', item)
   return item
+}
+
+/** Grabs a real frame from an uploaded video so its card shows the video, not a gradient. */
+export function createVideoThumbnail(src: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (value?: string) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      video.removeAttribute('src')
+      video.load()
+      resolve(value)
+    }
+    timer = setTimeout(() => finish(undefined), 5000)
+    video.preload = 'auto'
+    video.muted = true
+    video.playsInline = true
+    video.src = src
+    video.onloadeddata = () => {
+      try {
+        const target = Number.isFinite(video.duration) ? Math.min(0.2, video.duration / 2) : 0.2
+        video.currentTime = target
+      } catch {
+        finish(undefined)
+      }
+    }
+    video.onseeked = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        const w = video.videoWidth || 320
+        const h = video.videoHeight || 180
+        canvas.width = Math.min(480, w)
+        canvas.height = Math.max(1, Math.round((canvas.width / w) * h))
+        canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        finish(canvas.toDataURL('image/jpeg', 0.65))
+      } catch {
+        finish(undefined)
+      }
+    }
+    video.onerror = () => finish(undefined)
+  })
 }
 
 export async function getAllMedia(userId?: string): Promise<MediaItem[]> {

@@ -250,9 +250,21 @@ export default function EditorWorkspace() {
     return Math.max(30, Math.ceil(end / 5) * 5 + 5)
   }, [clips])
 
-  const playheadClip = clips.find((c) => time >= c.start && time < c.start + c.duration)
-  const activeAudioClip = clips.find((c) => c.trackId === 'track-audio' && c.src && time >= c.start && time < c.start + c.duration)
-  const previewClip = playheadClip?.src && !playheadClip.src.startsWith('data:image/svg+xml') ? playheadClip : undefined
+  const activeSrcClips = clips.filter(
+    (c) => !!c.src && !c.src.startsWith('data:image/svg+xml') && time >= c.start && time < c.start + c.duration,
+  )
+  // Video is the background; images on the overlay track sit on top of it.
+  // The old code picked only one clip, so an uploaded image over a video
+  // never appeared in the preview.
+  const backgroundClip =
+    activeSrcClips.find((c) => c.trackId === 'track-video' && c.src?.startsWith('data:video')) ||
+    activeSrcClips.find((c) => c.trackId === 'track-video') ||
+    activeSrcClips.find((c) => c.trackId === 'track-overlay' && c.src?.startsWith('data:image'))
+  const overlayClips = activeSrcClips.filter(
+    (c) => c !== backgroundClip && c.trackId === 'track-overlay' && c.src?.startsWith('data:image'),
+  )
+  const activeAudioClip = activeSrcClips.find((c) => c.trackId === 'track-audio')
+  const previewClip = backgroundClip
   const selectedClip = clips.find((c) => c.id === selectedClipId)
   const selectedElement = elements.find((e) => e.id === selectedElementId)
   const selectedText = selectedElement?.type === 'text' ? selectedElement : undefined
@@ -502,11 +514,15 @@ export default function EditorWorkspace() {
       }
     }
 
+    const addedClip = nextClips[nextClips.length - 1]
     useEditor.setState({
       elements: nextElements,
       clips: nextClips,
       selectedElementId: chooseElement,
-      selectedClipId: nextClips[nextClips.length - 1]?.id,
+      selectedClipId: addedClip?.id,
+      // Jump the playhead to the new clip so it is visible immediately,
+      // even when it was appended after another clip on the same track.
+      time: addedClip?.start ?? 0,
     })
     persistEditor()
     setStatus(message)
@@ -738,6 +754,19 @@ export default function EditorWorkspace() {
     elements,
   }
 
+  const renderClipMedia = (clip: Clip, className: string) =>
+    clip.src?.startsWith('data:video') ? (
+      <video
+        ref={clip === backgroundClip ? videoRef : undefined}
+        src={clip.src}
+        className={className}
+        muted={volume === 0}
+        playsInline
+      />
+    ) : (
+      <img src={clip.src} alt="" className={className} />
+    )
+
   const trackRows: Array<{ id: string; label: string; color: string; clips: Clip[]; kind: string }> = [
     { id: 'track-video', label: 'Video', color: C.purple, clips: clips.filter((c) => c.trackId === 'track-video'), kind: 'video' },
     { id: 'track-overlay', label: 'Overlay', color: '#3B82F6', clips: clips.filter((c) => c.trackId === 'track-overlay'), kind: 'overlay' },
@@ -959,13 +988,12 @@ export default function EditorWorkspace() {
                 filter: filterString,
               }}
             >
-              {previewClip?.src && (
-                previewClip.src.startsWith('data:image') ? (
-                  <img src={previewClip.src} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                ) : (
-                  <video ref={videoRef} src={previewClip.src} className="absolute inset-0 h-full w-full object-cover" muted={volume === 0} playsInline />
-                )
-              )}
+              {backgroundClip?.src && renderClipMedia(backgroundClip, 'absolute inset-0 h-full w-full object-cover')}
+              {overlayClips.map((clip) => (
+                <div key={clip.id} className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+                  {renderClipMedia(clip, 'max-h-full max-w-full object-contain')}
+                </div>
+              ))}
               {activeAudioClip?.src && <audio ref={audioRef} src={activeAudioClip.src} preload="auto" />}
               <DesignPreview
                 design={previewDesign}
