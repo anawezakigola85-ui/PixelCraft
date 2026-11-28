@@ -109,6 +109,18 @@ const formatTrackDuration = (seconds?: number) => {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 }
 
+type LicensedTrackMeta = { title: string; artist: string; license: string; sourceUrl?: string }
+const LICENSED_TRACKS_KEY = 'pixelcraft:licensed-music'
+
+function loadLicensedMeta(): Record<string, LicensedTrackMeta> {
+  try {
+    const raw = localStorage.getItem(LICENSED_TRACKS_KEY)
+    return raw ? JSON.parse(raw) as Record<string, LicensedTrackMeta> : {}
+  } catch {
+    return {}
+  }
+}
+
 const RAIL: Array<{ id: RailPanel; label: string; icon: ReactNode }> = [
   { id: 'media', label: 'Media', icon: <Video className="h-4 w-4" /> },
   { id: 'templates', label: 'Templates', icon: <LayoutGrid className="h-4 w-4" /> },
@@ -328,12 +340,17 @@ export default function EditorWorkspace() {
   const [musicLoading, setMusicLoading] = useState(false)
   const [musicNext, setMusicNext] = useState<CommonsResponse['continue'] | null>(null)
   const [musicPreviewId, setMusicPreviewId] = useState<string | undefined>()
+  const [licensedMeta, setLicensedMeta] = useState<Record<string, LicensedTrackMeta>>(() => loadLicensedMeta())
+  const [licenseTitle, setLicenseTitle] = useState('')
+  const [licenseArtist, setLicenseArtist] = useState('')
+  const [licenseRef, setLicenseRef] = useState('')
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const musicPreviewRef = useRef<HTMLAudioElement | null>(null)
   const musicRequestRef = useRef(0)
+  const licensedFileRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const dragRef = useRef<{
     id: string
@@ -441,16 +458,23 @@ export default function EditorWorkspace() {
 
   const refreshMedia = useCallback(async () => {
     const items = await getAllMedia(session?.userId)
+    const licenseData = loadLicensedMeta()
     const uploads: Asset[] = items.map((item: MediaItem) => {
       const kind: AssetKind = item.type.startsWith('video') ? 'video' : item.type.startsWith('audio') ? 'audio' : 'image'
+      const licensed = licenseData[item.id]
       return {
         id: item.id,
-        name: item.name,
+        name: licensed ? `${licensed.title} — ${licensed.artist}` : item.name,
         kind,
         src: item.src,
         thumbnail: item.thumbnail || (kind === 'image' ? item.src : undefined),
-        gradient: 'linear-gradient(135deg,#312e81,#0e7490)',
-        label: kind.toUpperCase(),
+        gradient: licensed
+          ? 'linear-gradient(135deg,#065f46,#0e7490)'
+          : 'linear-gradient(135deg,#312e81,#0e7490)',
+        label: licensed ? 'LICENSED' : kind.toUpperCase(),
+        credit: licensed?.artist,
+        license: licensed?.license,
+        sourceUrl: licensed?.sourceUrl,
       }
     })
     setMedia(uploads)
@@ -560,6 +584,42 @@ export default function EditorWorkspace() {
     void audio.play()
       .then(() => setStatus(`Previewing: ${track.name}`))
       .catch(() => setStatus('Browser blocked audio preview — press Play on the card again'))
+  }
+
+  const uploadLicensedTrack = async () => {
+    const file = licensedFileRef.current?.files?.[0]
+    if (!file) { setStatus('Choose an audio file first'); return }
+    if (!file.type.startsWith('audio/')) { setStatus('Please choose an MP3, M4A, WAV or OGG file'); return }
+    if (!licenseTitle.trim() || !licenseArtist.trim()) {
+      setStatus('Enter the song title and artist before adding it')
+      return
+    }
+    const title = licenseTitle.trim()
+    const artist = licenseArtist.trim()
+    setStatus(`Adding licensed track “${title}”…`)
+    try {
+      const id = await storeMediaFile(file)
+      const reference = licenseRef.trim()
+      const next = {
+        ...loadLicensedMeta(),
+        [id]: {
+          title,
+          artist,
+          license: reference || 'Licensed by rights holder',
+          sourceUrl: /^https?:\/\//i.test(reference) ? reference : undefined,
+        },
+      }
+      localStorage.setItem(LICENSED_TRACKS_KEY, JSON.stringify(next))
+      setLicensedMeta(next)
+      setLicenseTitle('')
+      setLicenseArtist('')
+      setLicenseRef('')
+      if (licensedFileRef.current) licensedFileRef.current.value = ''
+      await refreshMedia()
+      setStatus(`“${title}” added to Licensed music. You can now add it to the timeline.`)
+    } catch (error) {
+      setStatus(`Could not add licensed track: ${(error as Error).message}`)
+    }
   }
 
   // The inspector persists through updateCurrent(), which no-ops without a
@@ -907,6 +967,12 @@ export default function EditorWorkspace() {
     setStatus(`Removing ${asset.name}…`)
     try {
       await deleteMedia(asset.id, asset.src)
+      const savedMeta = loadLicensedMeta()
+      if (savedMeta[asset.id]) {
+        delete savedMeta[asset.id]
+        localStorage.setItem(LICENSED_TRACKS_KEY, JSON.stringify(savedMeta))
+        setLicensedMeta({ ...savedMeta })
+      }
       snapshot()
       const matches = (item: { mediaId?: string; src?: string }) =>
         item.mediaId === asset.id || (!!asset.src && item.src === asset.src)
@@ -1170,6 +1236,8 @@ export default function EditorWorkspace() {
     brand: [],
   }), [media, templateAssets, musicTracks])
 
+  const licensedAssets = media.filter((a) => a.kind === 'audio' && !!licensedMeta[a.id])
+
   const visibleAssets = assetsByPanel[rail].filter((a) => {
     if (showAssetFavoritesOnly && !favorites.has(a.id)) return false
     const q = query.trim().toLowerCase().replace(/cup[\s-]?cut/g, 'capcut')
@@ -1183,6 +1251,72 @@ export default function EditorWorkspace() {
     ].join(' ').toLowerCase()
     return haystack.includes(q)
   })
+
+  const renderMusicTrack = (track: Asset, isLicensed = false) => (
+    <div key={track.id} className="rounded-lg p-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => toggleMusicPreview(track)}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black"
+          style={{ background: `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }}
+          title={musicPreviewId === track.id ? 'Pause preview' : `Preview ${track.name}`}
+        >
+          {musicPreviewId === track.id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[10px]" style={{ color: C.text }} title={track.name}>{track.name}</p>
+          <p className="text-[8px]" style={{ color: isLicensed ? '#6ee7b7' : C.muted }}>
+            {track.license}{formatTrackDuration(track.duration) ? ` · ${formatTrackDuration(track.duration)}` : ''}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => toggleFavorite(track.id)}
+          className="rounded p-1"
+          style={{ background: 'transparent', color: favorites.has(track.id) ? '#fbbf24' : C.muted }}
+          title={favorites.has(track.id) ? 'Remove favourite' : 'Add favourite'}
+        >
+          <Star className="h-3 w-3" fill={favorites.has(track.id) ? 'currentColor' : 'none'} />
+        </button>
+        {isLicensed && (
+          <button
+            type="button"
+            onClick={() => void handleRemoveAsset(track)}
+            className="rounded p-1"
+            style={{ background: 'transparent', color: '#fca5a5' }}
+            title={`Remove ${track.name}`}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      <div className="mt-2 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => void addAsset(track)}
+          className="flex-1 rounded py-1 text-[9px] font-semibold"
+          style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
+          title={`Add ${track.name} to the timeline`}
+        >
+          Add to timeline
+        </button>
+        {track.sourceUrl && (
+          <a
+            href={track.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded px-2 py-1 text-[8px]"
+            style={{ background: C.panel2, color: C.muted, border: `1px solid ${C.border}` }}
+            title="Open the licence or artist page"
+          >
+            Source
+          </a>
+        )}
+      </div>
+      {track.credit && <p className="mt-1 truncate text-[8px]" style={{ color: C.muted }}>Credit: {track.credit}</p>}
+    </div>
+  )
 
   // Turn the real text/shape layers into a transparent PNG so the encoder can
   // composite them over the video instead of silently dropping them.
@@ -1653,6 +1787,59 @@ export default function EditorWorkspace() {
               </div>
             ) : rail === 'music' ? (
               <div className="space-y-3">
+                <div className="rounded-lg p-2" style={{ background: C.panel2, border: `1px solid ${C.border}` }}>
+                  <p className="text-[11px] font-semibold" style={{ color: C.text }}>Your licensed tracks</p>
+                  <p className="mt-1 text-[9px] leading-snug" style={{ color: C.muted }}>
+                    Add songs you own or have a written sync licence for. Adding a file here does not grant rights by itself.
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    <input
+                      value={licenseTitle}
+                      onChange={(e) => setLicenseTitle(e.target.value)}
+                      placeholder="Song title"
+                      className="h-7 w-full rounded px-2 text-[10px] outline-none"
+                      style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                      aria-label="Licensed song title"
+                    />
+                    <input
+                      value={licenseArtist}
+                      onChange={(e) => setLicenseArtist(e.target.value)}
+                      placeholder="Artist / rights holder"
+                      className="h-7 w-full rounded px-2 text-[10px] outline-none"
+                      style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                      aria-label="Licensed song artist"
+                    />
+                    <input
+                      value={licenseRef}
+                      onChange={(e) => setLicenseRef(e.target.value)}
+                      placeholder="Licence reference or URL (optional)"
+                      className="h-7 w-full rounded px-2 text-[10px] outline-none"
+                      style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                      aria-label="Licence reference"
+                    />
+                    <input
+                      ref={licensedFileRef}
+                      type="file"
+                      accept="audio/*"
+                      className="w-full text-[9px]"
+                      style={{ color: C.muted }}
+                      aria-label="Licensed audio file"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void uploadLicensedTrack()}
+                      className="w-full rounded py-1.5 text-[10px] font-semibold"
+                      style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
+                    >
+                      Add licensed track
+                    </button>
+                  </div>
+                  {licensedAssets.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {licensedAssets.map((track) => renderMusicTrack(track, true))}
+                    </div>
+                  )}
+                </div>
                 <div>
                   <p className="text-[11px] font-semibold" style={{ color: C.text }}>Free music library</p>
                   <p className="mt-1 text-[9px] leading-snug" style={{ color: C.muted }}>
@@ -1680,60 +1867,7 @@ export default function EditorWorkspace() {
                 {musicLoading && <p className="text-[9px]" style={{ color: C.cyan }}>Searching the music catalogue…</p>}
                 {visibleAssets.length ? (
                   <div className="space-y-2">
-                    {visibleAssets.map((track) => (
-                      <div key={track.id} className="rounded-lg p-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
-                        <div className="flex items-start gap-2">
-                          <button
-                            type="button"
-                            onClick={() => toggleMusicPreview(track)}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black"
-                            style={{ background: `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }}
-                            title={musicPreviewId === track.id ? 'Pause preview' : `Preview ${track.name}`}
-                          >
-                            {musicPreviewId === track.id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                          </button>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[10px]" style={{ color: C.text }} title={track.name}>{track.name}</p>
-                            <p className="text-[8px]" style={{ color: C.muted }}>
-                              {track.license}{formatTrackDuration(track.duration) ? ` · ${formatTrackDuration(track.duration)}` : ''}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => toggleFavorite(track.id)}
-                            className="rounded p-1"
-                            style={{ background: 'transparent', color: favorites.has(track.id) ? '#fbbf24' : C.muted }}
-                            title={favorites.has(track.id) ? 'Remove favourite' : 'Add favourite'}
-                          >
-                            <Star className="h-3 w-3" fill={favorites.has(track.id) ? 'currentColor' : 'none'} />
-                          </button>
-                        </div>
-                        <div className="mt-2 flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void addAsset(track)}
-                            className="flex-1 rounded py-1 text-[9px] font-semibold"
-                            style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
-                            title={`Add ${track.name} to the timeline`}
-                          >
-                            Add to timeline
-                          </button>
-                          {track.sourceUrl && (
-                            <a
-                              href={track.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="rounded px-2 py-1 text-[8px]"
-                              style={{ background: C.panel2, color: C.muted, border: `1px solid ${C.border}` }}
-                              title="Open the licence and artist page"
-                            >
-                              Source
-                            </a>
-                          )}
-                        </div>
-                        {track.credit && <p className="mt-1 truncate text-[8px]" style={{ color: C.muted }}>Credit: {track.credit}</p>}
-                      </div>
-                    ))}
+                    {visibleAssets.map((track) => renderMusicTrack(track))}
                   </div>
                 ) : (
                   <p className="py-6 text-center text-[10px]" style={{ color: C.muted }}>
