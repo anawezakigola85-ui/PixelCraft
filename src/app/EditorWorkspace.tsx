@@ -326,25 +326,56 @@ export default function EditorWorkspace() {
   const audioTrackId = tracks.find((t) => t.type === 'audio')?.id || 'track-audio'
   const captionTrackId = tracks.find((t) => t.type === 'text')?.id || 'track-captions'
 
+  const srcMime = (src?: string) => {
+    if (!src?.startsWith('data:')) return ''
+    const comma = src.indexOf(',')
+    return src.slice(5, comma >= 0 ? comma : undefined).split(';')[0].toLowerCase()
+  }
+  const isVideoSrc = (src?: string) => srcMime(src).startsWith('video/')
+  const isAudioSrc = (src?: string) => srcMime(src).startsWith('audio/')
+  const isImageSrc = (src?: string) => srcMime(src).startsWith('image/')
+
+  const trackTypeById = new Map<string, Track['type']>(tracks.map((t) => [t.id, t.type]))
+  const clipTrackType = (clip: Clip) => {
+    const fromProject = trackTypeById.get(clip.trackId)
+    if (fromProject) return fromProject
+    const id = clip.trackId.toLowerCase()
+    if (id.includes('audio')) return 'audio' as const
+    if (id.includes('caption') || id.includes('text')) return 'text' as const
+    if (id.includes('overlay') || id.includes('image')) return 'image' as const
+    if (id.includes('video')) return 'video' as const
+    return undefined
+  }
+  const clipIsVisibleAtPlayhead = (clip: Clip) =>
+    time >= clip.start - 0.001 && time <= clip.start + clip.duration + 0.001
+
   const activeSrcClips = clips.filter(
     (c) => !!c.src && !hiddenTrackIds.has(c.trackId) &&
-      !c.src.startsWith('data:image/svg+xml') && time >= c.start && time < c.start + c.duration,
+      !c.src.startsWith('data:image/svg+xml') && clipIsVisibleAtPlayhead(c),
   )
-  // Video is the background; images on the overlay track sit on top of it.
-  // The old code picked only one clip, so an uploaded image over a video
-  // never appeared in the preview.
-  const backgroundClip =
-    activeSrcClips.find((c) => c.trackId === 'track-video' && c.src?.startsWith('data:video')) ||
-    activeSrcClips.find((c) => c.trackId === 'track-video') ||
-    activeSrcClips.find((c) => c.trackId === 'track-overlay' && c.src?.startsWith('data:image'))
-  const overlayClips = activeSrcClips.filter(
-    (c) => c !== backgroundClip && c.trackId === 'track-overlay' && c.src?.startsWith('data:image'),
+  // Classify by the real media MIME first and the project's track type second.
+  // Older projects use generated track IDs, so matching hardcoded strings
+  // made every uploaded clip look like an empty canvas.
+  const activeVisualClips = activeSrcClips.filter((c) => !isAudioSrc(c.src))
+  const activeVideoClips = activeVisualClips.filter(
+    (c) => isVideoSrc(c.src) || (clipTrackType(c) === 'video' && !isImageSrc(c.src)),
   )
-  const activeAudioClip = activeSrcClips.find(
-    (c) => c.trackId === 'track-audio' && !tracks.find((t) => t.id === c.trackId)?.muted,
+  const activeImageClips = activeVisualClips.filter(
+    (c) => isImageSrc(c.src) || (clipTrackType(c) === 'image' && !isVideoSrc(c.src)),
+  )
+  const backgroundClip = activeVideoClips[0] || activeImageClips[0] || activeVisualClips[0]
+  const overlayClips = activeVisualClips.filter(
+    (c) => c !== backgroundClip && (isImageSrc(c.src) || (clipTrackType(c) === 'image' && !isVideoSrc(c.src))),
+  )
+  const activeAudioClip = clips.find(
+    (c) => !!c.src && !hiddenTrackIds.has(c.trackId) &&
+      !tracks.find((t) => t.id === c.trackId)?.muted &&
+      (isAudioSrc(c.src) || clipTrackType(c) === 'audio') &&
+      clipIsVisibleAtPlayhead(c),
   )
   const previewClip = backgroundClip
   const selectedClip = clips.find((c) => c.id === selectedClipId)
+  const selectedClipIsAudio = !!selectedClip && (isAudioSrc(selectedClip.src) || clipTrackType(selectedClip) === 'audio')
   const selectedClipEffects = (selectedClip?.params?.effects as ClipEffect[] | undefined) || []
   const selectedEffect = selectedClipEffects.find((e) => e.id === selectedEffectId)
   const selectedElement = elements.find((e) => e.id === selectedElementId)
@@ -425,7 +456,16 @@ export default function EditorWorkspace() {
     if (!project) return
     const ed = useEditor.getState()
     if (ed.selectedProjectId !== project.id) {
-      useEditor.setState({ selectedProjectId: project.id, elements: project.elements, clips: project.clips })
+      // Reset playback when switching projects: a leftover playhead past the
+      // new clips made the studio show "Empty canvas" even after adding media.
+      useEditor.setState({
+        selectedProjectId: project.id,
+        elements: project.elements,
+        clips: project.clips,
+        time: 0,
+        playing: false,
+        selectedClipId: undefined,
+      })
     }
     if (initializedProjectId.current !== project.id) {
       initializedProjectId.current = project.id
@@ -583,6 +623,14 @@ export default function EditorWorkspace() {
     setStatus('Redid edit')
   }
 
+  const revealTrack = (trackId: string) => {
+    const current = useProjects.getState().current
+    if (!current?.tracks?.some((t) => t.id === trackId && t.hidden)) return
+    void useProjects.getState().updateCurrent({
+      tracks: current.tracks.map((t) => (t.id === trackId ? { ...t, hidden: false } : t)),
+    })
+  }
+
   const addAsset = async (asset: Asset, placement?: { start: number; trackId: string }) => {
     const p = await ensureProject()
     snapshot()
@@ -625,8 +673,10 @@ export default function EditorWorkspace() {
       }, Date.now() + i))
       nextElements.push(...newElements)
       chooseElement = newElements[0]?.id
+      const templateTrackId = placement?.trackId || overlayTrackId
+      revealTrack(templateTrackId)
       nextClips.push({
-        id: v4(), trackId: placement?.trackId || overlayTrackId, start: placement?.start ?? 0, duration: 6,
+        id: v4(), trackId: templateTrackId, start: placement?.start ?? 0, duration: 6,
         name: asset.name, src: asset.thumbnail, params: { transition: 'fade' },
       })
       message = `“${asset.name}” added with ${newElements.length} editable layers`
@@ -641,6 +691,7 @@ export default function EditorWorkspace() {
       }, Date.now())
       nextElements.push(el)
       chooseElement = el.id
+      revealTrack(captionTrackId)
       nextClips.push({ id: v4(), trackId: captionTrackId, start: placement?.start ?? 0, duration: 4, name: preset.text, params: {} })
       message = `Text layer “${preset.text}” added and selected`
     } else if (asset.kind === 'shape') {
@@ -654,13 +705,20 @@ export default function EditorWorkspace() {
       nextElements.push(el)
       chooseElement = el.id
       const thumb = designToDataUrl({ aspectRatio: p.aspectRatio, background: 'transparent', elements: [el] }, true)
-      nextClips.push({ id: v4(), trackId: placement?.trackId || overlayTrackId, start: placement?.start ?? 0, duration: 4, name: asset.name, src: thumb, params: {} })
+      const shapeTrackId = placement?.trackId || overlayTrackId
+      revealTrack(shapeTrackId)
+      nextClips.push({ id: v4(), trackId: shapeTrackId, start: placement?.start ?? 0, duration: 4, name: asset.name, src: thumb, params: {} })
       message = `${asset.name} shape added and selected`
     } else {
       const trackId = placement?.trackId || (asset.kind === 'audio' ? audioTrackId : asset.kind === 'video' ? videoTrackId : overlayTrackId)
+      revealTrack(trackId)
       const start = placement?.start ?? nextClips.filter((c) => c.trackId === trackId).reduce((max, c) => Math.max(max, c.start + c.duration), 0)
       const fallback = asset.kind === 'audio' ? 10 : asset.kind === 'video' ? 6 : 5
-      const clip: Clip = { id: v4(), trackId, start, duration: fallback, name: asset.name, src: asset.src, params: {} }
+      const clip: Clip = {
+        id: v4(), trackId, start, duration: fallback, name: asset.name, src: asset.src,
+        mediaId: media.some((m) => m.id === asset.id) ? asset.id : undefined,
+        params: {},
+      }
       nextClips.push(clip)
       message = `“${asset.name}” added to the ${trackId.replace('track-', '')} track`
 
@@ -724,7 +782,7 @@ export default function EditorWorkspace() {
     try {
       for (const file of files) await storeMediaFile(file)
       await refreshMedia()
-      setStatus(`${files.length} file(s) added to Media`)
+      setStatus(`${files.length} file(s) added to Media — click a card to place it on the timeline`)
     } catch (error) {
       setStatus(`Upload failed: ${(error as Error).message}`)
     }
@@ -1541,7 +1599,22 @@ export default function EditorWorkspace() {
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
                   <Wand2 className="h-8 w-8 opacity-60" style={{ color: C.cyan }} />
                   <p className="text-sm font-semibold">Empty canvas</p>
-                  <p className="px-6 text-[10px]" style={{ color: C.muted }}>Add media, a shape or a real template from the left rail.</p>
+                  <p className="px-6 text-[10px]" style={{ color: C.muted }}>
+                    {media.length
+                      ? 'Your upload is in Media. Click it once to place it on the timeline.'
+                      : 'Add media, a shape or a real template from the left rail.'}
+                  </p>
+                  {media.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void addAsset(media[0])}
+                      className="pointer-events-auto mt-1 rounded-md px-3 py-1.5 text-[10px] font-semibold"
+                      style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
+                      title={`Add ${media[0].name} to the timeline`}
+                    >
+                      <Plus className="mr-1 inline h-3 w-3" />Add {media[0].name}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -2094,7 +2167,7 @@ export default function EditorWorkspace() {
                     </label>
                   ))}
                 </div>
-                {selectedClip?.trackId === 'track-audio' && (
+                {selectedClipIsAudio && selectedClip && (
                   <>
                     <Slider label="Clip volume" value={Number(selectedClip.params?.volume ?? 1)} min={0} max={1} step={0.05} onChange={(v) => patchClipParams({ volume: v })} />
                     <button
@@ -2142,7 +2215,7 @@ export default function EditorWorkspace() {
               </>
             )}
 
-            {tab === 'Video' && selectedClip?.trackId === 'track-audio' && (
+            {tab === 'Video' && selectedClipIsAudio && (
               <Section title="Audio Mix" icon={<Volume2 className="h-3.5 w-3.5" />}>
                 <Slider label="Master volume" value={volume} min={0} max={1} step={0.05} onChange={(v) => useEditor.getState().setVolume(v)} />
                 <Slider label="Fade in" value={Number(selectedClip?.params?.fadeIn || 0)} min={0} max={10} step={0.5} suffix="s" onChange={(v) => patchClipParams({ fadeIn: v })} disabled={!selectedClip} />
