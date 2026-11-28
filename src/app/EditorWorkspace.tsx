@@ -40,7 +40,7 @@ const C = {
 } as const
 
 type RailPanel = 'media' | 'templates' | 'audio' | 'text' | 'elements' | 'transitions' | 'effects' | 'brand'
-type InspectorTab = 'Video' | 'Audio' | 'Text' | 'Adjust'
+type InspectorTab = 'Video' | 'Speed' | 'Animation' | 'Adjust' | 'AI Stylize'
 type AssetKind = 'image' | 'video' | 'audio' | 'template' | 'text' | 'shape' | 'transition'
 
 interface EditorSnapshot {
@@ -250,6 +250,8 @@ export default function EditorWorkspace() {
   const [aspect, setAspect] = useState<AspectRatio>(project?.aspectRatio || '9:16')
   const [rail, setRail] = useState<RailPanel>('effects')
   const [tab, setTab] = useState<InspectorTab>('Video')
+  const [uniformScale, setUniformScale] = useState(true)
+  const [bgTolerance, setBgTolerance] = useState(32)
   const [query, setQuery] = useState('')
   const [favorites, setFavorites] = useState<Set<string>>(() => loadSet('pixelcraft:favourite-assets'))
   const [media, setMedia] = useState<Asset[]>([])
@@ -763,6 +765,50 @@ export default function EditorWorkspace() {
     persistEditor({ effects: { ...effects, ...patch } })
   }
 
+  // Solid-colour background removal for image clips. It runs in the browser,
+  // writes a real transparent PNG back to the clip, and therefore survives
+  // both preview and export. Videos are left alone because frame-by-frame
+  // segmentation would need a model download.
+  const removeImageBackground = async () => {
+    const clip = selectedClip
+    if (!clip?.src?.startsWith('data:image')) {
+      setStatus('Select an image clip on the timeline to remove its background')
+      return
+    }
+    try {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = clip.src
+      await img.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth || img.width
+      canvas.height = img.naturalHeight || img.height
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (!ctx) { setStatus('Canvas is unavailable in this browser'); return }
+      ctx.drawImage(img, 0, 0)
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const px = data.data
+      const at = (x: number, y: number) => {
+        const i = (y * canvas.width + x) * 4
+        return [px[i], px[i + 1], px[i + 2]] as const
+      }
+      const corners = [at(0, 0), at(canvas.width - 1, 0), at(0, canvas.height - 1), at(canvas.width - 1, canvas.height - 1)]
+      const bg = [0, 1, 2].map((c) => corners.reduce((sum, p) => sum + p[c], 0) / corners.length)
+      const limit = Math.max(6, bgTolerance * 2.5)
+      let removed = 0
+      for (let i = 0; i < px.length; i += 4) {
+        const dist = Math.sqrt((px[i] - bg[0]) ** 2 + (px[i + 1] - bg[1]) ** 2 + (px[i + 2] - bg[2]) ** 2)
+        if (dist <= limit) { px[i + 3] = 0; removed++ }
+      }
+      ctx.putImageData(data, 0, 0)
+      snapshot()
+      patchClipParams({ src: canvas.toDataURL('image/png'), bgRemoved: true })
+      setStatus(`Background removed from ${removed.toLocaleString()} pixels`)
+    } catch {
+      setStatus('Could not read that image for background removal')
+    }
+  }
+
   const toggleTrackFlag = (trackId: string, flag: 'hidden' | 'locked' | 'muted') => {
     const track = tracks.find((t) => t.id === trackId)
     if (!track) return
@@ -799,7 +845,6 @@ export default function EditorWorkspace() {
     }
     patchClipParams({ effects: [...selectedClipEffects, instance] })
     setSelectedEffectId(instance.id)
-    setTab('Video')
     setStatus(`${def.name} applied to ${selectedClip.name || 'clip'}`)
   }
 
@@ -1022,10 +1067,19 @@ export default function EditorWorkspace() {
     let clipOpacity = Number(clip.params?.opacity ?? 1)
     if (fadeIn > 0) clipOpacity *= Math.min(1, localTime / fadeIn)
     if (fadeOut > 0) clipOpacity *= Math.min(1, Math.max(0, (clip.duration - localTime) / fadeOut))
+    const clipScale = Number(clip.params?.scale ?? 1)
+    const clipRotation = Number(clip.params?.rotation ?? 0)
+    const clipX = Number(clip.params?.x ?? 0)
+    const clipY = Number(clip.params?.y ?? 0)
+    const transformParts = [
+      fx.transform === 'none' ? '' : fx.transform,
+      `translate(${clipX}px, ${clipY}px) rotate(${clipRotation}deg) scale(${clipScale})`,
+    ].filter(Boolean)
     const style: CSSProperties = {
       filter: fx.filter === 'none' ? undefined : fx.filter,
-      transform: fx.transform === 'none' ? undefined : fx.transform,
+      transform: transformParts.join(' ') || undefined,
       opacity: Math.max(0, Math.min(1, clipOpacity)),
+      clipPath: clip.params?.mask ? 'inset(6% round 14%)' : undefined,
     }
     return clip.src?.startsWith('data:video') ? (
       <video
@@ -1389,8 +1443,7 @@ export default function EditorWorkspace() {
                 selectedElementId={selectedElementId}
                 onElementClick={(id) => {
                   useEditor.getState().setSelectedElementId(id)
-                  const el = elements.find((e) => e.id === id)
-                  setTab(el?.type === 'text' ? 'Text' : 'Video')
+                  setTab('Video')
                 }}
                 className="absolute inset-0 h-full w-full"
               />
@@ -1607,13 +1660,13 @@ export default function EditorWorkspace() {
 
         {/* 5. Right inspector — 280px */}
         <aside className="flex shrink-0 flex-col" style={{ width: rightPanelWidth, display: focusPreview ? 'none' : undefined, background: C.panel, borderLeft: `1px solid ${C.border}` }}>
-          <div className="grid shrink-0 grid-cols-4 border-b" style={{ borderColor: C.border }}>
-            {(['Video', 'Audio', 'Text', 'Adjust'] as InspectorTab[]).map((t) => (
+          <div className="grid shrink-0 grid-cols-5 border-b" style={{ borderColor: C.border }}>
+            {(['Video', 'Speed', 'Animation', 'Adjust', 'AI Stylize'] as InspectorTab[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTab(t)}
-                className="py-2.5 text-[10px] font-semibold transition"
+                className="px-0.5 py-2.5 text-[9px] font-semibold transition"
                 style={{ color: tab === t ? C.cyan : C.muted, borderBottom: tab === t ? `2px solid ${C.purple}` : '2px solid transparent', background: tab === t ? `${C.purple}1a` : 'transparent' }}
               >
                 {t}
@@ -1622,25 +1675,76 @@ export default function EditorWorkspace() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {(tab === 'Video' || tab === 'Text' || tab === 'Adjust') && (
+            {tab === 'Video' && (
+              <div className="grid grid-cols-4 gap-1 border-b px-2 py-2" style={{ borderColor: C.border }}>
+                {([
+                  { label: 'Basic', icon: SlidersHorizontal, action: () => { setTab('Video'); setStatus('Basic tools selected') } },
+                  { label: 'Remove BG', icon: Sparkles, action: () => { void removeImageBackground() } },
+                  { label: 'Mask', icon: Crop, action: () => { patchClipParams({ mask: !selectedClip?.params?.mask }); setStatus(selectedClip?.params?.mask ? 'Mask removed' : 'Rounded mask applied') } },
+                  { label: 'Retouch', icon: Wand2, action: () => { setTab('Adjust'); setStatus('Retouch with the grading sliders') } },
+                ] as const).map(({ label, icon: Icon, action }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={action}
+                    className="flex flex-col items-center gap-1 rounded-md py-1.5 text-[8px] transition hover:brightness-125"
+                    style={{ background: C.stage, color: C.muted, border: `1px solid ${C.border}` }}
+                  >
+                    <Icon className="h-3.5 w-3.5" style={{ color: C.cyan }} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(tab === 'Video' || tab === 'Adjust') && (
               <Section title="Transform" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
                 <p className="text-[9px]" style={{ color: C.muted }}>
                   {selectedElement ? `Editing layer: ${selectedElement.name}` : 'No layer selected — changes affect the whole preview.'}
                 </p>
-                <Slider label="Scale" value={selectedElement ? Number(selectedElement.params?.scale || 1) : scale} min={0.4} max={2} step={0.05} onChange={(v) => {
-                  if (selectedElement) patchElementParams({ scale: v })
-                  else setScale(v)
-                }} />
+                <Slider
+                  label="Scale"
+                  value={selectedElement ? Number(uniformScale ? (selectedElement.params?.scale ?? 1) : (selectedElement.params?.scaleX ?? selectedElement.params?.scale ?? 1)) : scale}
+                  min={0.4} max={2} step={0.05}
+                  onChange={(v) => {
+                    if (selectedElement) {
+                      if (uniformScale) patchElementParams({ scale: v, scaleX: v, scaleY: v })
+                      else patchElementParams({ scaleX: v, scaleY: 1 })
+                    } else setScale(v)
+                  }}
+                />
+                <label className="flex items-center gap-2 text-[10px]" style={{ color: C.muted }}>
+                  <input
+                    type="checkbox"
+                    checked={uniformScale}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                      setUniformScale(next)
+                      if (selectedElement) patchElementParams(next ? { scaleX: 1, scaleY: 1 } : { scaleX: Number(selectedElement.params?.scale ?? 1), scaleY: 1 })
+                    }}
+                    style={{ accentColor: C.cyan }}
+                  />
+                  Uniform scale
+                </label>
                 <Slider label="Position X" value={Math.round(selectedElement?.x ?? 120)} min={0} max={project?.canvasWidth || 1920} onChange={(v) => updateSelectedElement({ x: v })} disabled={!selectedElement} />
                 <Slider label="Position Y" value={Math.round(selectedElement?.y ?? 120)} min={0} max={project?.canvasHeight || 1080} onChange={(v) => updateSelectedElement({ y: v })} disabled={!selectedElement} />
                 <Slider label="Rotation" value={selectedElement ? Number(selectedElement.params?.rotation || 0) : rotation} min={-180} max={180} suffix="°" onChange={(v) => {
                   if (selectedElement) patchElementParams({ rotation: v })
                   else setRotation(v)
                 }} />
+                {!selectedElement && selectedClip && (
+                  <div className="space-y-2 border-t pt-2" style={{ borderColor: C.border }}>
+                    <p className="text-[8px] font-bold uppercase tracking-wider" style={{ color: C.muted }}>Selected clip</p>
+                    <Slider label="Clip scale" value={Number(selectedClip.params?.scale ?? 1)} min={0.4} max={2} step={0.05} onChange={(v) => patchClipParams({ scale: v })} />
+                    <Slider label="Clip X" value={Number(selectedClip.params?.x ?? 0)} min={-500} max={500} onChange={(v) => patchClipParams({ x: v })} />
+                    <Slider label="Clip Y" value={Number(selectedClip.params?.y ?? 0)} min={-500} max={500} onChange={(v) => patchClipParams({ y: v })} />
+                    <Slider label="Clip rotation" value={Number(selectedClip.params?.rotation ?? 0)} min={-180} max={180} suffix="°" onChange={(v) => patchClipParams({ rotation: v })} />
+                  </div>
+                )}
               </Section>
             )}
 
-            {tab === 'Text' && (
+            {tab === 'Video' && (
               <Section title="Text Content" icon={<Type className="h-3.5 w-3.5" />}>
                 {selectedText ? (
                   <>
@@ -1670,7 +1774,7 @@ export default function EditorWorkspace() {
               </Section>
             )}
 
-            {(tab === 'Video' || tab === 'Adjust') && (
+            {tab === 'Animation' && (
               <Section title="Applied Effects" icon={<Wand2 className="h-3.5 w-3.5" />}>
                 <p className="text-[9px]" style={{ color: C.muted }}>
                   {selectedClip ? `Clip: ${selectedClip.name || 'Clip'}` : 'Select a clip on the timeline first.'}
@@ -1758,6 +1862,33 @@ export default function EditorWorkspace() {
               </Section>
             )}
 
+            {tab === 'Animation' && (
+              <Section title="Animation Presets" icon={<Zap className="h-3.5 w-3.5" />}>
+                <p className="text-[9px]" style={{ color: C.muted }}>
+                  {selectedClip ? `Applying to: ${selectedClip.name || 'Clip'}` : 'Select a clip on the timeline first.'}
+                </p>
+                {(['Intro & Outro', 'Motion'] as const).map((category) => (
+                  <div key={category}>
+                    <p className="mb-1 text-[8px] font-bold uppercase tracking-wider" style={{ color: C.muted }}>{category}</p>
+                    <div className="grid grid-cols-3 gap-1">
+                      {ALL_EFFECTS.filter((e) => e.category === category).map((effect) => (
+                        <button
+                          key={effect.id}
+                          type="button"
+                          onClick={() => applyStudioEffect(effect)}
+                          className="rounded-md py-1.5 text-[8px] leading-tight transition hover:brightness-125"
+                          style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                          title={effect.description}
+                        >
+                          {effect.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </Section>
+            )}
+
             {tab === 'Adjust' && (
               <Section title="Colour Grading" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
                 <Slider label="Brightness" value={effects.brightness ?? 1} min={0.2} max={2} step={0.05} onChange={(v) => patchEffects({ brightness: v })} />
@@ -1767,12 +1898,68 @@ export default function EditorWorkspace() {
               </Section>
             )}
 
+            {tab === 'AI Stylize' && (
+              <>
+                <Section title="Remove Background" icon={<Sparkles className="h-3.5 w-3.5" />}>
+                  <p className="text-[9px] leading-snug" style={{ color: C.muted }}>
+                    Select an image clip with a plain/solid background, then remove it. The result is saved as a transparent PNG on that clip.
+                  </p>
+                  <Slider label="Tolerance" value={bgTolerance} min={5} max={100} onChange={setBgTolerance} />
+                  <button
+                    type="button"
+                    onClick={() => { void removeImageBackground() }}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-[10px] font-semibold"
+                    style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" /> Remove background
+                  </button>
+                  {!!selectedClip?.params?.bgRemoved && <p className="text-[9px]" style={{ color: C.cyan }}>Background removed for this clip.</p>}
+                </Section>
+                <Section title="Style Presets" icon={<Wand2 className="h-3.5 w-3.5" />}>
+                  <p className="text-[9px]" style={{ color: C.muted }}>
+                    {selectedClip ? `Applying to: ${selectedClip.name || 'Clip'}` : 'Select a clip on the timeline first.'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {([
+                      ['Retro Film', 'retro-film'],
+                      ['VHS Tape', 'retro-vhs'],
+                      ['Neon Party', 'party-neon'],
+                      ['Gold Burst', 'celebrate-gold'],
+                      ['Halftone', 'comic-halftone'],
+                      ['Bokeh', 'decor-bokeh'],
+                    ] as const).map(([label, id]) => {
+                      const effect = ALL_EFFECTS.find((e) => e.id === id)
+                      if (!effect) return null
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => applyStudioEffect(effect)}
+                          className="rounded-md py-2 text-[9px] transition hover:brightness-125"
+                          style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setTab('Adjust'); setStatus('Opened grading for retouching') }}
+                    className="w-full rounded py-1.5 text-[9px]"
+                    style={{ background: C.panel2, color: C.muted, border: `1px solid ${C.border}` }}
+                  >
+                    Fine tune in Adjust →
+                  </button>
+                </Section>
+              </>
+            )}
+
             {tab === 'Video' && (
               <Section title="Clip Controls" icon={<SlidersHorizontal className="h-3.5 w-3.5" />}>
                 <Slider label="Clip opacity" value={Number(selectedClip?.params?.opacity ?? 1)} min={0} max={1} step={0.05} onChange={(v) => patchClipParams({ opacity: v })} disabled={!selectedClip} />
                 <Slider label="Fade in" value={Number(selectedClip?.params?.fadeIn || 0)} min={0} max={10} step={0.1} suffix="s" onChange={(v) => patchClipParams({ fadeIn: v })} disabled={!selectedClip} />
                 <Slider label="Fade out" value={Number(selectedClip?.params?.fadeOut || 0)} min={0} max={10} step={0.1} suffix="s" onChange={(v) => patchClipParams({ fadeOut: v })} disabled={!selectedClip} />
-                <Slider label="Clip speed" value={Number(selectedClip?.params?.rate || 1)} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => patchClipParams({ rate: v })} disabled={!selectedClip || selectedClip?.trackId !== 'track-video'} />
                 <div className="grid grid-cols-4 gap-1">
                   {([['cropTop', 'Top'], ['cropRight', 'Right'], ['cropBottom', 'Bottom'], ['cropLeft', 'Left']] as const).map(([key, label]) => (
                     <label key={key} className="text-[8px]" style={{ color: C.muted }}>
@@ -1812,18 +1999,32 @@ export default function EditorWorkspace() {
               </div>
             </Section>
 
-            {(tab === 'Video' || tab === 'Audio') && (
-              <Section title="Playback" icon={<Gauge className="h-3.5 w-3.5" />}>
-                <Slider label="Playback speed" value={speed} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => { setSpeed(v); useEditor.getState().setPlaybackRate(v) }} />
-                <div className="flex gap-1">
-                  {[0.5, 1, 1.5, 2].map((r) => (
-                    <button key={r} type="button" onClick={() => { setSpeed(r); useEditor.getState().setPlaybackRate(r) }} className="flex-1 rounded py-1 text-[9px]" style={{ background: speed === r ? `${C.purple}44` : C.stage, color: speed === r ? C.cyan : C.muted, border: `1px solid ${C.border}` }}>{r}×</button>
-                  ))}
-                </div>
-              </Section>
+            {tab === 'Speed' && (
+              <>
+                <Section title="Playback" icon={<Gauge className="h-3.5 w-3.5" />}>
+                  <Slider label="Preview speed" value={speed} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => { setSpeed(v); useEditor.getState().setPlaybackRate(v) }} />
+                  <div className="flex gap-1">
+                    {[0.5, 1, 1.5, 2].map((r) => (
+                      <button key={r} type="button" onClick={() => { setSpeed(r); useEditor.getState().setPlaybackRate(r) }} className="flex-1 rounded py-1 text-[9px]" style={{ background: speed === r ? `${C.purple}44` : C.stage, color: speed === r ? C.cyan : C.muted, border: `1px solid ${C.border}` }}>{r}×</button>
+                    ))}
+                  </div>
+                </Section>
+                <Section title="Clip Speed" icon={<Zap className="h-3.5 w-3.5" />}>
+                  <p className="text-[9px]" style={{ color: C.muted }}>
+                    {selectedClip ? `Clip: ${selectedClip.name || 'Clip'}` : 'Select a clip on the timeline first.'}
+                  </p>
+                  <Slider label="Speed" value={Number(selectedClip?.params?.rate ?? selectedClip?.rate ?? 1)} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => patchClipParams({ rate: v })} disabled={!selectedClip} />
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0.5, 1, 1.5, 2].map((r) => (
+                      <button key={r} type="button" onClick={() => patchClipParams({ rate: r })} disabled={!selectedClip} className="rounded py-1 text-[9px] disabled:opacity-40" style={{ background: Number(selectedClip?.params?.rate ?? 1) === r ? `${C.purple}44` : C.stage, color: Number(selectedClip?.params?.rate ?? 1) === r ? C.cyan : C.muted, border: `1px solid ${C.border}` }}>{r}×</button>
+                    ))}
+                  </div>
+                  <p className="text-[8px] leading-snug" style={{ color: C.muted }}>Clip speed is stored with the clip and used by the preview timeline.</p>
+                </Section>
+              </>
             )}
 
-            {tab === 'Audio' && (
+            {tab === 'Video' && selectedClip?.trackId === 'track-audio' && (
               <Section title="Audio Mix" icon={<Volume2 className="h-3.5 w-3.5" />}>
                 <Slider label="Master volume" value={volume} min={0} max={1} step={0.05} onChange={(v) => useEditor.getState().setVolume(v)} />
                 <Slider label="Fade in" value={Number(selectedClip?.params?.fadeIn || 0)} min={0} max={10} step={0.5} suffix="s" onChange={(v) => patchClipParams({ fadeIn: v })} disabled={!selectedClip} />

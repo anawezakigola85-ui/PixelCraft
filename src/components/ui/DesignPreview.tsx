@@ -22,11 +22,14 @@ interface PreviewDesign {
 
 function transformFor(el: PreviewElement, x: number, y: number, width: number, height: number) {
   const rotation = Number(el.params?.rotation || 0)
-  const scale = Number(el.params?.scale || 1)
-  if (!rotation && scale === 1) return undefined
+  const base = Number(el.params?.scale || 1)
+  // `scaleX`/`scaleY` are set when the editor's "Uniform scale" toggle is off.
+  const scaleX = Number(el.params?.scaleX ?? base)
+  const scaleY = Number(el.params?.scaleY ?? base)
+  if (!rotation && scaleX === 1 && scaleY === 1) return undefined
   const cx = x + width / 2
   const cy = y + height / 2
-  return `rotate(${rotation} ${cx} ${cy}) translate(${cx * (1 - scale)} ${cy * (1 - scale)}) scale(${scale})`
+  return `rotate(${rotation} ${cx} ${cy}) translate(${cx * (1 - scaleX)} ${cy * (1 - scaleY)}) scale(${scaleX} ${scaleY})`
 }
 
 export default function DesignPreview({
