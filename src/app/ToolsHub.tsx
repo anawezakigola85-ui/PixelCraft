@@ -15,6 +15,7 @@ import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { navigate, useLocation } from './Router'
 import { useProjects, storeMediaFile } from '../store/projectsStore'
+import { useSettings, saveSettings } from '../store/settings'
 import { v4 } from '../store/ids'
 import type { ProjectElement } from '../lib/types'
 import {
@@ -249,15 +250,15 @@ function GreenScreenTool() {
 
 function CaptionsTool() {
   const tool = useTool()
-  const { createProject, updateCurrent } = useProjects()
   const [text, setText] = useState('')
   const [seconds, setSeconds] = useState(3)
   const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(false)
+  /** Reused on every subsequent click so "Open in Studio again" never duplicates. */
+  const [studioProjectId, setStudioProjectId] = useState<string | null>(null)
   const lines = useMemo(() => textToCaptions(text, seconds), [text, seconds])
 
   const addToStudio = async () => {
-    if (!lines.length || busy) return
+    if ((!lines.length && !studioProjectId) || busy) return
     setBusy(true)
     try {
       const elements: ProjectElement[] = lines.map((c, i) => ({
@@ -270,9 +271,16 @@ function CaptionsTool() {
         id: v4(), trackId: 'track-captions', start: c.start, duration: c.duration,
         name: c.line, params: {},
       }))
-      const p = await createProject('Auto Captions', 'video', '16:9')
-      updateCurrent({ elements, clips, background: p.background })
-      setDone(true)
+      if (studioProjectId) {
+        await useProjects.getState().openProject(studioProjectId)
+        if (useProjects.getState().current?.id !== studioProjectId) setStudioProjectId(null)
+      }
+      if (!studioProjectId || useProjects.getState().current?.id !== studioProjectId) {
+        const p = await useProjects.getState().createProject('Auto Captions', 'video', '16:9')
+        setStudioProjectId(p.id)
+      }
+      useProjects.getState().updateCurrent({ elements, clips })
+      await useProjects.getState().saveCurrent()
       navigate('/workspace')
     } finally {
       setBusy(false)
@@ -281,12 +289,12 @@ function CaptionsTool() {
 
   return (
     <Card title="Auto Captions" subtitle="Turn your script into timed caption layers on a real Studio timeline." icon={<Captions className="h-4 w-4" />}>
-      <textarea value={text} onChange={(e) => { setText(e.target.value); setDone(false) }} rows={4} placeholder="Paste your script. Each sentence becomes a caption…" className="w-full resize-none rounded-lg bg-[var(--color-panel)] p-3 text-sm outline-none border border-transparent focus:border-[var(--color-accent-3)]" />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="Paste your script. Each sentence becomes a caption…" className="w-full resize-none rounded-lg bg-[var(--color-panel)] p-3 text-sm outline-none border border-transparent focus:border-[var(--color-accent-3)]" />
       <SliderRow label="Seconds per caption" value={seconds} min={1} max={8} step={0.5} suffix="s" onChange={setSeconds} />
       <p className="text-xs text-[var(--color-text-muted)]">{lines.length} caption lines ready</p>
-      <Button className="brand-gradient text-black" disabled={!lines.length || busy} onClick={() => void addToStudio()}>
+      <Button className="brand-gradient text-black" disabled={(!lines.length && !studioProjectId) || busy} onClick={() => void addToStudio()}>
         {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Film className="mr-2 h-4 w-4" />}
-        {done ? 'Open in Studio again' : 'Add captions to Studio'}
+        {studioProjectId ? 'Open in Studio again' : 'Add captions to Studio'}
       </Button>
       <ResultView tool={tool} />
     </Card>
@@ -581,13 +589,10 @@ const TABS: Array<{ id: Kind; label: string; icon: ReactNode }> = [
 
 export default function ToolsHub() {
   const location = useLocation()
-  const [tab, setTab] = useState<Kind>(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get('tab') || ''
+  // The URL is the single source of truth: deep links and back/forward work.
+  const tab = useMemo<Kind>(() => {
+    const fromUrl = new URLSearchParams(location.split('?')[1] || '').get('tab') || ''
     return (['video', 'image', 'audio', 'ai', 'solutions'] as string[]).includes(fromUrl) ? fromUrl as Kind : 'video'
-  })
-  useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get('tab') || ''
-    if ((['video', 'image', 'audio', 'ai', 'solutions'] as string[]).includes(fromUrl)) setTab(fromUrl as Kind)
   }, [location])
   const { current } = useProjects()
   return (
@@ -601,7 +606,7 @@ export default function ToolsHub() {
           <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-[var(--color-text-muted)]">Real files · no placeholders</span>
           <div className="ml-auto flex flex-wrap gap-1.5">
             {TABS.map((item) => (
-              <button key={item.id} onClick={() => setTab(item.id)} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition ${tab === item.id ? 'brand-gradient text-black' : 'bg-white/5 hover:bg-white/10'}`}>
+              <button key={item.id} onClick={() => navigate(`/tools?tab=${item.id}`)} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition ${tab === item.id ? 'brand-gradient text-black' : 'bg-white/5 hover:bg-white/10'}`}>
                 {item.icon}{item.label}
               </button>
             ))}
@@ -649,16 +654,24 @@ export default function ToolsHub() {
           <div className="space-y-4">
             <div className="glass rounded-2xl p-5">
               <h2 className="font-display text-lg font-semibold">AI models</h2>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">PixelCraft already sends generation requests through your secure backend. Add your provider key in Render → Environment, then generate images from the AI Studio.</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">Click a model to save it as the active model in Settings and open AI Studio. Image generation uses your secure OpenAI backend key; only models your provider actually supports will succeed. Use <code>dall-e-3</code> in Settings for images if a preset fails.</p>
               <Button className="brand-gradient mt-4 text-black" onClick={() => navigate('/ai')}><Sparkles className="mr-2 h-4 w-4" /> Open AI Studio</Button>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {AI_MODELS.map((m) => (
-                <div key={m} className="glass rounded-xl p-4 text-xs">
+                <button
+                  key={m}
+                  className="glass rounded-xl p-4 text-left text-xs transition hover:border-[var(--color-accent-3)]"
+                  onClick={() => {
+                    void saveSettings({ ...useSettings.getState(), aiModel: m })
+                    navigate('/ai')
+                  }}
+                  title={`Set active model to ${m} and open AI Studio`}
+                >
                   <Sparkles className="mb-2 h-4 w-4 text-[var(--color-accent-2)]" />
                   <p className="font-medium">{m}</p>
-                  <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Needs provider key</p>
-                </div>
+                  <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Set model → AI Studio</p>
+                </button>
               ))}
             </div>
             <div className="glass rounded-2xl p-5">

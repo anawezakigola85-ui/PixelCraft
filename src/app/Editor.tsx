@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { useRouteParam, navigate } from './Router'
+import { useCallback, useEffect } from 'react'
+import { useRouteParam } from './Router'
 import { useProjects } from '../store/projectsStore'
 import { useEditor } from '../store/editor'
 import TopBar from './TopBar'
@@ -12,44 +12,66 @@ import { useUI } from '../store/ui'
 
 export default function Editor() {
   const id = useRouteParam('editor')
-  const { current, loadCurrent, saveCurrent } = useProjects()
-  const setSelectedProjectId = useEditor().setSelectedProjectId
-  const view = useEditor().view
+  const { current, loadCurrent, saveCurrent, updateCurrent } = useProjects()
+  const view = useEditor((s) => s.view)
+  const aiPanelOpen = useUI((s) => s.aiPanelOpen)
 
+  // Load the project for this route. The sync effect below adopts it into the
+  // editor store once `current` is available.
   useEffect(() => {
-    if (id) {
-      void loadCurrent(id).then(() => setSelectedProjectId(id))
-    }
-  }, [id, loadCurrent, setSelectedProjectId])
+    if (id) void loadCurrent(id)
+  }, [id, loadCurrent])
 
-  // Sync editor store from project
   useEffect(() => {
     if (!current) return
-    const e = useEditor.getState()
-    if (e.selectedProjectId !== current.id) {
-      setSelectedProjectId(current.id)
-      useEditor.setState({ elements: current.elements, clips: current.clips })
+    const state = useEditor.getState()
+    if (state.selectedProjectId !== current.id) {
+      useEditor.setState({
+        selectedProjectId: current.id,
+        elements: current.elements ?? [],
+        clips: current.clips ?? [],
+        selectedElementId: undefined,
+        selectedClipId: undefined,
+        playing: false,
+        time: 0,
+        history: [],
+        future: [],
+      })
     }
-  }, [current, setSelectedProjectId])
+  }, [current])
 
-  // Global keyboard shortcuts
+  /** Always fold the live editor state into the project before persisting. */
+  const saveWithEditor = useCallback(async () => {
+    const editor = useEditor.getState()
+    if (current && editor.selectedProjectId === current.id) {
+      updateCurrent({ elements: editor.elements, clips: editor.clips })
+    }
+    await saveCurrent()
+  }, [current, updateCurrent, saveCurrent])
+
+  // Only shortcuts that are actually implemented are handled here.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const key = e.key.toLowerCase()
+      if (key === 's') {
         e.preventDefault()
-        window.dispatchEvent(new Event('pixelcraft:undo'))
-      }
-      if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+        void saveWithEditor()
+      } else if (key === 'z') {
         e.preventDefault()
-        void saveCurrent()
+        if (e.shiftKey) useEditor.getState().redo()
+        else useEditor.getState().undo()
+      } else if (key === 'y') {
+        e.preventDefault()
+        useEditor.getState().redo()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [saveCurrent])
+  }, [saveWithEditor])
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-[var(--color-bg)]" style={{ paddingRight: useUI((s) => s.aiPanelOpen ? '26rem' : '0') }}>
+    <div className="fixed inset-0 flex flex-col bg-[var(--color-bg)]" style={{ paddingRight: aiPanelOpen ? '26rem' : '0' }}>
       <TopBar />
       <div className="flex-1 flex min-h-0">
         {view !== 'video' ? <LeftSidebar /> : null}
@@ -59,9 +81,9 @@ export default function Editor() {
         {view !== 'video' ? <RightSidebar /> : null}
       </div>
 
-      {useUI((s) => s.aiPanelOpen) && <AIAssistant />}
+      {aiPanelOpen && <AIAssistant />}
     </div>
   )
 }
 
-export { navigate }
+export { navigate } from './Router'

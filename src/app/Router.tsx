@@ -2,16 +2,22 @@ import { useSyncExternalStore } from 'react'
 
 type Listener = () => void
 const listeners = new Set<Listener>()
-let current = window.location.pathname
+
+/** Full location (path + query + hash) so ?tab=… deep links and back/forward work. */
+function currentLocation() {
+  return window.location.pathname + window.location.search + window.location.hash
+}
+
+let current = currentLocation()
 
 function emit() {
+  current = currentLocation()
   listeners.forEach((l) => l())
 }
 
 export function navigate(path: string) {
   if (path !== current) {
     window.history.pushState({}, '', path)
-    current = path
     emit()
   }
 }

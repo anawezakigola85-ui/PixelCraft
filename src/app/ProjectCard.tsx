@@ -1,4 +1,4 @@
-import { MoreHorizontal } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 import type { Project } from '../lib/types'
 import DesignPreview from '../components/ui/DesignPreview'
 
@@ -25,7 +25,6 @@ export function ProjectCard({
       <div
         className="relative aspect-video cursor-pointer bg-[#090A0F]"
         onClick={onOpen}
-        onDoubleClick={onRename}
         title={`Open "${project.name}"`}
       >
         {/* Real project artwork, not a generic gradient placeholder. */}
@@ -49,12 +48,18 @@ export function ProjectCard({
         <h3 className="font-medium text-sm truncate" title={project.name}>
           {project.name}
         </h3>
+        {/* Dedicated rename button: no navigation first, no double-click race. */}
         <button
-          className="h-7 w-7 rounded-lg text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]"
-          title="Double-click the preview to rename"
-          onClick={onRename}
+          type="button"
+          aria-label={`Rename ${project.name}`}
+          title="Rename project"
+          className="h-7 w-7 shrink-0 rounded-lg text-[var(--color-text-muted)] hover:bg-white/10 hover:text-[var(--color-text)]"
+          onClick={(e) => {
+            e.stopPropagation()
+            onRename()
+          }}
         >
-          <MoreHorizontal className="h-3.5 w-3.5" />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
       </div>
       <div className="px-3 pb-3 text-xs text-[var(--color-text-muted)]">{time}</div>

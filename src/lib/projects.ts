@@ -54,10 +54,13 @@ export function newProject(
     background: '#0a0a12',
     elements: [],
     clips: [] as Clip[],
+    // Canonical IDs keep the studio timeline, drop targets and track flags in
+    // sync for every new project.
     tracks: [
-      { id: `track-v-${id.slice(-6)}`, name: 'Video', type: 'video' },
-      { id: `track-a-${id.slice(-6)}`, name: 'Audio', type: 'audio' },
-      { id: `track-t-${id.slice(-6)}`, name: 'Text', type: 'text' },
+      { id: 'track-video', name: 'Video', type: 'video' },
+      { id: 'track-overlay', name: 'Overlay', type: 'image' },
+      { id: 'track-audio', name: 'Audio', type: 'audio' },
+      { id: 'track-captions', name: 'Text', type: 'text' },
     ],
   } as Project
 }

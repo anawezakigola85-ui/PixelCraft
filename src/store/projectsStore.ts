@@ -41,6 +41,8 @@ export interface ProjectsStore {
   loadCurrent: (id: string | null) => Promise<void>
   createProject: (name: string, type: ProjectType, aspectRatio?: AspectRatio) => Promise<Project>
   renameProject: (name: string) => Promise<void>
+  /** Rename a specific project by id (not necessarily the current one). */
+  renameProjectById: (id: string, name: string) => Promise<void>
   duplicateProject: () => Promise<void>
   deleteProject: () => Promise<void>
   exportProject: () => void
@@ -80,8 +82,16 @@ export const useProjects = create<ProjectsStore>()((set, get) => ({
   renameProject: async (name) => {
     const current = get().current
     if (!current) return
-    const renamed = await renameProject(current, name)
-    set((s) => ({ current: renamed, projects: s.projects.map((p) => (p.id === renamed.id ? renamed : p)) }))
+    await get().renameProjectById(current.id, name)
+  },
+  renameProjectById: async (id, name) => {
+    const found = get().projects.find((p) => p.id === id) || (await getProject(id))
+    if (!found) return
+    const renamed = await renameProject(found, name)
+    set((s) => ({
+      current: s.current?.id === id ? renamed : s.current,
+      projects: s.projects.map((p) => (p.id === id ? renamed : p)),
+    }))
   },
   duplicateProject: async () => {
     const current = get().current

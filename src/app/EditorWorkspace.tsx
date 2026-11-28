@@ -254,6 +254,7 @@ export default function EditorWorkspace() {
   const [bgTolerance, setBgTolerance] = useState(32)
   const [query, setQuery] = useState('')
   const [favorites, setFavorites] = useState<Set<string>>(() => loadSet('pixelcraft:favourite-assets'))
+  const [showAssetFavoritesOnly, setShowAssetFavoritesOnly] = useState(false)
   const [media, setMedia] = useState<Asset[]>([])
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
@@ -320,6 +321,10 @@ export default function EditorWorkspace() {
   const effects = project?.effects || {}
   const tracks = project?.tracks || []
   const hiddenTrackIds = new Set(tracks.filter((t) => t.hidden).map((t) => t.id))
+  const videoTrackId = tracks.find((t) => t.type === 'video')?.id || 'track-video'
+  const overlayTrackId = tracks.find((t) => t.type === 'image')?.id || 'track-overlay'
+  const audioTrackId = tracks.find((t) => t.type === 'audio')?.id || 'track-audio'
+  const captionTrackId = tracks.find((t) => t.type === 'text')?.id || 'track-captions'
 
   const activeSrcClips = clips.filter(
     (c) => !!c.src && !hiddenTrackIds.has(c.trackId) &&
@@ -461,12 +466,13 @@ export default function EditorWorkspace() {
     const v = videoRef.current
     if (!v || !previewClip?.src) return
     v.volume = volume
-    v.playbackRate = playbackRate
+    const clipRate = Math.max(0.25, Math.min(4, Number(previewClip?.params?.rate ?? previewClip?.rate ?? 1)))
+    v.playbackRate = Math.max(0.25, Math.min(4, playbackRate * clipRate))
     const local = Math.max(0, time - previewClip.start)
     if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local
     if (playing) void v.play().catch(() => {})
     else v.pause()
-  }, [time, playing, volume, playbackRate, previewClip?.id, previewClip?.start, previewClip?.src])
+  }, [time, playing, volume, playbackRate, previewClip?.id, previewClip?.start, previewClip?.src, previewClip?.params?.rate])
 
   // Real audio playback with fade in/out from the Audio inspector.
   useEffect(() => {
@@ -476,14 +482,15 @@ export default function EditorWorkspace() {
     if (Math.abs(a.currentTime - local) > 0.3) a.currentTime = local
     const fadeIn = Number(activeAudioClip.params?.fadeIn || 0)
     const fadeOut = Number(activeAudioClip.params?.fadeOut || 0)
-    let gain = volume
+    let gain = activeAudioClip.params?.muted ? 0 : volume * Number(activeAudioClip.params?.volume ?? 1)
     if (fadeIn > 0) gain *= Math.min(1, local / fadeIn)
     if (fadeOut > 0) gain *= Math.min(1, Math.max(0, (activeAudioClip.duration - local) / fadeOut))
     a.volume = Math.min(1, Math.max(0, gain))
-    a.playbackRate = playbackRate
+    const clipRate = Math.max(0.25, Math.min(4, Number(activeAudioClip.params?.rate ?? activeAudioClip.rate ?? 1)))
+    a.playbackRate = Math.max(0.25, Math.min(4, playbackRate * clipRate))
     if (playing) void a.play().catch(() => {})
     else a.pause()
-  }, [time, playing, volume, playbackRate, activeAudioClip?.id, activeAudioClip?.src, activeAudioClip?.start, activeAudioClip?.duration, activeAudioClip?.params?.fadeIn, activeAudioClip?.params?.fadeOut])
+  }, [time, playing, volume, playbackRate, activeAudioClip?.id, activeAudioClip?.src, activeAudioClip?.start, activeAudioClip?.duration, activeAudioClip?.params?.fadeIn, activeAudioClip?.params?.fadeOut, activeAudioClip?.params?.volume, activeAudioClip?.params?.muted, activeAudioClip?.params?.rate])
 
   // Decode a real audio clip once and draw amplitude peaks on its timeline clip.
   useEffect(() => {
@@ -586,10 +593,28 @@ export default function EditorWorkspace() {
     let message = ''
 
     if (asset.kind === 'transition') {
-      if (!selectedClipId) { setStatus('Select a clip on the timeline first'); return }
-      const next = nextClips.map((c) => c.id === selectedClipId ? { ...c, params: { ...(c.params || {}), transition: asset.transition } } : c)
+      if (!selectedClip) { setStatus('Select a clip on the timeline first'); return }
+      const t = asset.transition || 'fade'
+      const currentEffects = (selectedClip.params?.effects as ClipEffect[] | undefined) || []
+      const effectId = t === 'slide' ? 'intro-slide' : t === 'zoom' ? 'outro-zoom' : undefined
+      const def = effectId ? ALL_EFFECTS.find((e) => e.id === effectId) : undefined
+      const effects = def ? [...currentEffects, {
+        id: v4(), effectId: def.id, name: def.name, category: def.category,
+        intensity: 0.8, enabled: true, duration: Math.min(2, selectedClip.duration),
+      } as ClipEffect] : currentEffects
+      const next = nextClips.map((c) => c.id === selectedClip.id ? {
+        ...c,
+        params: {
+          ...(c.params || {}),
+          transition: t,
+          fadeIn: 0.5,
+          fadeOut: 0.5,
+          effects,
+          mask: t === 'wipe' ? true : c.params?.mask,
+        },
+      } : c)
       persistClips(next)
-      setStatus(`${asset.name} transition applied to selected clip`)
+      setStatus(`${asset.name} transition applied with a real fade${def ? ' + motion' : ''}`)
       return
     }
 
@@ -601,7 +626,7 @@ export default function EditorWorkspace() {
       nextElements.push(...newElements)
       chooseElement = newElements[0]?.id
       nextClips.push({
-        id: v4(), trackId: placement?.trackId || 'track-overlay', start: placement?.start ?? 0, duration: 6,
+        id: v4(), trackId: placement?.trackId || overlayTrackId, start: placement?.start ?? 0, duration: 6,
         name: asset.name, src: asset.thumbnail, params: { transition: 'fade' },
       })
       message = `“${asset.name}” added with ${newElements.length} editable layers`
@@ -616,7 +641,7 @@ export default function EditorWorkspace() {
       }, Date.now())
       nextElements.push(el)
       chooseElement = el.id
-      nextClips.push({ id: v4(), trackId: 'track-captions', start: placement?.start ?? 0, duration: 4, name: preset.text, params: {} })
+      nextClips.push({ id: v4(), trackId: captionTrackId, start: placement?.start ?? 0, duration: 4, name: preset.text, params: {} })
       message = `Text layer “${preset.text}” added and selected`
     } else if (asset.kind === 'shape') {
       const el = fullElement({
@@ -629,10 +654,10 @@ export default function EditorWorkspace() {
       nextElements.push(el)
       chooseElement = el.id
       const thumb = designToDataUrl({ aspectRatio: p.aspectRatio, background: 'transparent', elements: [el] }, true)
-      nextClips.push({ id: v4(), trackId: placement?.trackId || 'track-overlay', start: placement?.start ?? 0, duration: 4, name: asset.name, src: thumb, params: {} })
+      nextClips.push({ id: v4(), trackId: placement?.trackId || overlayTrackId, start: placement?.start ?? 0, duration: 4, name: asset.name, src: thumb, params: {} })
       message = `${asset.name} shape added and selected`
     } else {
-      const trackId = placement?.trackId || (asset.kind === 'audio' ? 'track-audio' : asset.kind === 'video' ? 'track-video' : 'track-overlay')
+      const trackId = placement?.trackId || (asset.kind === 'audio' ? audioTrackId : asset.kind === 'video' ? videoTrackId : overlayTrackId)
       const start = placement?.start ?? nextClips.filter((c) => c.trackId === trackId).reduce((max, c) => Math.max(max, c.start + c.duration), 0)
       const fallback = asset.kind === 'audio' ? 10 : asset.kind === 'video' ? 6 : 5
       const clip: Clip = { id: v4(), trackId, start, duration: fallback, name: asset.name, src: asset.src, params: {} }
@@ -709,6 +734,12 @@ export default function EditorWorkspace() {
   const splitSelected = () => {
     const id = useEditor.getState().selectedClipId
     if (!id) { setStatus('Select a clip first, then split at the playhead'); return }
+    const clip = useEditor.getState().clips.find((c) => c.id === id)
+    if (!clip) { setStatus('That clip no longer exists'); return }
+    if (time <= clip.start + 0.05 || time >= clip.start + clip.duration - 0.05) {
+      setStatus('Move the playhead inside the selected clip before splitting')
+      return
+    }
     snapshot()
     useEditor.getState().splitClip(id, time)
     persistClips([...useEditor.getState().clips])
@@ -745,6 +776,7 @@ export default function EditorWorkspace() {
 
   const updateSelectedElement = (patch: Partial<ProjectElement>, message?: string) => {
     if (!selectedElement) { setStatus('Select a layer in the preview first'); return }
+    snapshot()
     useEditor.getState().updateElement(selectedElement.id, patch)
     persistEditor()
     if (message) setStatus(message)
@@ -757,11 +789,13 @@ export default function EditorWorkspace() {
 
   const patchClipParams = (patch: Record<string, unknown>) => {
     if (!selectedClip) { setStatus('Select a clip on the timeline first'); return }
+    snapshot()
     const next = useEditor.getState().clips.map((c) => c.id === selectedClip.id ? { ...c, params: { ...(c.params || {}), ...patch } } : c)
     persistClips(next)
   }
 
   const patchEffects = (patch: Partial<NonNullable<Project['effects']>>) => {
+    snapshot()
     persistEditor({ effects: { ...effects, ...patch } })
   }
 
@@ -926,6 +960,7 @@ export default function EditorWorkspace() {
   }), [media, templateAssets])
 
   const visibleAssets = assetsByPanel[rail].filter((a) => {
+    if (showAssetFavoritesOnly && !favorites.has(a.id)) return false
     const q = query.trim().toLowerCase().replace(/cup[\s-]?cut/g, 'capcut')
     if (!q) return true
     const haystack = [
@@ -937,6 +972,28 @@ export default function EditorWorkspace() {
     ].join(' ').toLowerCase()
     return haystack.includes(q)
   })
+
+  // Turn the real text/shape layers into a transparent PNG so the encoder can
+  // composite them over the video instead of silently dropping them.
+  const rasterizeElementsForExport = async (p: Project, els: ProjectElement[]): Promise<string | undefined> => {
+    if (!els.length) return undefined
+    try {
+      const svg = designToDataUrl({ aspectRatio: p.aspectRatio, background: 'transparent', elements: els }, true)
+      const img = new Image()
+      img.src = svg
+      await img.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = p.canvasWidth || 1920
+      canvas.height = p.canvasHeight || 1080
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return undefined
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      return canvas.toDataURL('image/png')
+    } catch {
+      return undefined
+    }
+  }
 
   const runExport = async () => {
     const p = useProjects.getState().current
@@ -954,6 +1011,7 @@ export default function EditorWorkspace() {
         clips: useEditor.getState().clips,
         effects,
       }
+      const overlayPng = isJson ? undefined : await rasterizeElementsForExport(finalProject, finalProject.elements)
       const blob = isJson
         ? new Blob([JSON.stringify(finalProject, null, 2)], { type: 'application/json' })
         : await exportVideo({
@@ -962,6 +1020,8 @@ export default function EditorWorkspace() {
           resolution,
           fps: Number(frameRate.split(' ')[0]) || 30,
           quality,
+          volume,
+          overlayPng,
           onProgress: (msg, progress) => {
             setStatus(msg)
             if (typeof progress === 'number') setExportProgress(progress)
@@ -1039,6 +1099,8 @@ export default function EditorWorkspace() {
     const asset = media.find((a) => a.id === id) || templateAssets.find((a) => a.id === id) ||
       TEXT_PRESETS.find((a) => a.id === id) || SHAPE_PRESETS.find((a) => a.id === id)
     if (!asset) return
+    const locked = tracks.find((t) => t.id === trackId)?.locked
+    if (locked) { setStatus('That track is locked — unlock it before dropping media'); return }
     const rect = e.currentTarget.getBoundingClientRect()
     const start = Math.max(0, Math.round(((e.clientX - rect.left) / pxPerSecond) * 4) / 4)
     void addAsset(asset, { start, trackId })
@@ -1047,7 +1109,9 @@ export default function EditorWorkspace() {
   const tickStep = duration <= 15 ? 1 : duration <= 60 ? 5 : duration <= 180 ? 10 : 30
   const rulerTicks = Array.from({ length: Math.floor(duration / tickStep) + 1 }, (_, i) => i * tickStep)
   const gridSize = tickStep * pxPerSecond
-  const stageScale = selectedElement ? 1 : scale * previewZoom
+  // Preview zoom must work even while a layer is selected; the selected
+  // element's own scale is applied separately by DesignPreview.
+  const stageScale = scale * previewZoom
   const stageRotation = selectedElement ? 0 : rotation
   const stageOpacity = selectedElement ? 1 : opacity
   const previewDesign = {
@@ -1075,19 +1139,26 @@ export default function EditorWorkspace() {
       fx.transform === 'none' ? '' : fx.transform,
       `translate(${clipX}px, ${clipY}px) rotate(${clipRotation}deg) scale(${clipScale})`,
     ].filter(Boolean)
+    const crop = [clip.params?.cropTop, clip.params?.cropRight, clip.params?.cropBottom, clip.params?.cropLeft]
+      .map((v) => Math.max(0, Math.min(45, Number(v || 0))))
+    const hasCrop = crop.some((v) => v > 0)
+    const clipPath = hasCrop || clip.params?.mask
+      ? `inset(${crop[0]}% ${crop[1]}% ${crop[2]}% ${crop[3]}%${clip.params?.mask ? ' round 14%' : ''})`
+      : undefined
     const style: CSSProperties = {
       filter: fx.filter === 'none' ? undefined : fx.filter,
       transform: transformParts.join(' ') || undefined,
       opacity: Math.max(0, Math.min(1, clipOpacity)),
-      clipPath: clip.params?.mask ? 'inset(6% round 14%)' : undefined,
+      clipPath,
     }
+    const clipRate = Math.max(0.25, Math.min(4, Number(clip.params?.rate ?? clip.rate ?? 1)))
     return clip.src?.startsWith('data:video') ? (
       <video
-        ref={clip === backgroundClip ? videoRef : undefined}
         src={clip.src}
         className={className}
         style={style}
         muted={volume === 0}
+        ref={clip === backgroundClip ? videoRef : (el) => { if (el) el.playbackRate = clipRate }}
         playsInline
       />
     ) : (
@@ -1098,12 +1169,22 @@ export default function EditorWorkspace() {
   const leftPanelWidth = focusPreview ? 0 : workspaceLayout === 'column' ? 220 : workspaceLayout === 'inspector' ? 200 : 260
   const rightPanelWidth = focusPreview ? 0 : workspaceLayout === 'column' ? 240 : workspaceLayout === 'inspector' ? 340 : 280
 
-  const trackRows: Array<{ id: string; label: string; color: string; clips: Clip[]; kind: string }> = [
-    { id: 'track-video', label: 'Video', color: C.purple, clips: clips.filter((c) => c.trackId === 'track-video'), kind: 'video' },
-    { id: 'track-overlay', label: 'Overlay', color: '#3B82F6', clips: clips.filter((c) => c.trackId === 'track-overlay'), kind: 'overlay' },
-    { id: 'track-audio', label: 'Audio', color: '#10B981', clips: clips.filter((c) => c.trackId === 'track-audio'), kind: 'audio' },
-    { id: 'track-captions', label: 'Captions', color: '#00E5FF', clips: clips.filter((c) => c.trackId === 'track-captions'), kind: 'caption' },
-  ]
+  // Rows come from the project's real tracks so lock/hide/mute always target
+  // an existing track — including older projects with generated track IDs.
+  const trackColours: Record<string, string> = { video: C.purple, image: '#3B82F6', audio: '#10B981', text: '#00E5FF' }
+  const trackRows: Array<{ id: string; label: string; color: string; clips: Clip[]; kind: string }> =
+    (tracks.length ? tracks : [
+      { id: videoTrackId, name: 'Video', type: 'video' },
+      { id: overlayTrackId, name: 'Overlay', type: 'image' },
+      { id: audioTrackId, name: 'Audio', type: 'audio' },
+      { id: captionTrackId, name: 'Text', type: 'text' },
+    ] as Track[]).map((track) => ({
+      id: track.id,
+      label: track.name,
+      color: trackColours[track.type] || C.muted,
+      kind: track.type,
+      clips: clips.filter((c) => c.trackId === track.id),
+    }))
 
   return (
     <div className="fixed inset-0 z-30 flex flex-col overflow-hidden" style={{ background: C.bg, color: C.text }}>
@@ -1128,7 +1209,7 @@ export default function EditorWorkspace() {
           ><Check className="h-3.5 w-3.5" /></IconButton>
           <IconButton
             label="Save as a copy"
-            onClick={() => void useProjects.getState().duplicateProject().then(() => setStatus('Project saved as a new copy'))}
+            onClick={() => void useProjects.getState().duplicateProject().then(() => setStatus('Copy saved and opened'))}
           ><Copy className="h-3.5 w-3.5" /></IconButton>
           <IconButton label="Split / Cut at playhead" onClick={splitSelected}><Scissors className="h-3.5 w-3.5" /></IconButton>
         </div>
@@ -1232,16 +1313,25 @@ export default function EditorWorkspace() {
               </button>
             )}
             <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*" hidden onChange={(e) => void handleUpload(e)} />
-            <div className="flex items-center gap-2 rounded-lg px-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
-              <Search className="h-3.5 w-3.5" style={{ color: C.muted }} />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search assets"
-                className="h-8 w-full bg-transparent text-[11px] outline-none"
-                style={{ color: C.text }}
-              />
-            </div>
+            {rail !== 'effects' && rail !== 'brand' && (
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center gap-2 rounded-lg px-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
+                  <Search className="h-3.5 w-3.5" style={{ color: C.muted }} />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search assets"
+                    className="h-8 w-full bg-transparent text-[11px] outline-none"
+                    style={{ color: C.text }}
+                  />
+                </div>
+                <IconButton
+                  label="Show favourite assets only"
+                  active={showAssetFavoritesOnly}
+                  onClick={() => setShowAssetFavoritesOnly((v) => !v)}
+                ><Star className="h-3.5 w-3.5" fill={showAssetFavoritesOnly ? 'currentColor' : 'none'} /></IconButton>
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-3">
@@ -1678,10 +1768,24 @@ export default function EditorWorkspace() {
             {tab === 'Video' && (
               <div className="grid grid-cols-4 gap-1 border-b px-2 py-2" style={{ borderColor: C.border }}>
                 {([
-                  { label: 'Basic', icon: SlidersHorizontal, action: () => { setTab('Video'); setStatus('Basic tools selected') } },
+                  {
+                    label: 'Basic', icon: SlidersHorizontal,
+                    action: () => {
+                      setScale(1); setRotation(0); setOpacity(1); setPreviewZoom(1); setUniformScale(true)
+                      if (selectedElement) patchElementParams({ scale: 1, scaleX: 1, scaleY: 1, rotation: 0 })
+                      setStatus('Basic transform reset')
+                    },
+                  },
                   { label: 'Remove BG', icon: Sparkles, action: () => { void removeImageBackground() } },
                   { label: 'Mask', icon: Crop, action: () => { patchClipParams({ mask: !selectedClip?.params?.mask }); setStatus(selectedClip?.params?.mask ? 'Mask removed' : 'Rounded mask applied') } },
-                  { label: 'Retouch', icon: Wand2, action: () => { setTab('Adjust'); setStatus('Retouch with the grading sliders') } },
+                  {
+                    label: 'Retouch', icon: Wand2,
+                    action: () => {
+                      patchEffects({ brightness: 1.05, contrast: 1.08, saturation: 1.12 })
+                      setTab('Adjust')
+                      setStatus('Gentle retouch grading applied')
+                    },
+                  },
                 ] as const).map(({ label, icon: Icon, action }) => (
                   <button
                     key={label}
@@ -1720,19 +1824,33 @@ export default function EditorWorkspace() {
                     onChange={(e) => {
                       const next = e.target.checked
                       setUniformScale(next)
-                      if (selectedElement) patchElementParams(next ? { scaleX: 1, scaleY: 1 } : { scaleX: Number(selectedElement.params?.scale ?? 1), scaleY: 1 })
+                      if (selectedElement) {
+                        const current = Number(selectedElement.params?.scaleX ?? selectedElement.params?.scale ?? 1)
+                        patchElementParams(next ? { scale: current, scaleX: current, scaleY: current } : { scaleX: current, scaleY: current })
+                      }
                     }}
                     style={{ accentColor: C.cyan }}
                   />
                   Uniform scale
                 </label>
+                {!uniformScale && selectedElement && (
+                  <>
+                    <Slider label="Scale X" value={Number(selectedElement.params?.scaleX ?? selectedElement.params?.scale ?? 1)} min={0.4} max={2} step={0.05} onChange={(v) => patchElementParams({ scaleX: v })} />
+                    <Slider label="Scale Y" value={Number(selectedElement.params?.scaleY ?? selectedElement.params?.scale ?? 1)} min={0.4} max={2} step={0.05} onChange={(v) => patchElementParams({ scaleY: v })} />
+                  </>
+                )}
                 <Slider label="Position X" value={Math.round(selectedElement?.x ?? 120)} min={0} max={project?.canvasWidth || 1920} onChange={(v) => updateSelectedElement({ x: v })} disabled={!selectedElement} />
                 <Slider label="Position Y" value={Math.round(selectedElement?.y ?? 120)} min={0} max={project?.canvasHeight || 1080} onChange={(v) => updateSelectedElement({ y: v })} disabled={!selectedElement} />
                 <Slider label="Rotation" value={selectedElement ? Number(selectedElement.params?.rotation || 0) : rotation} min={-180} max={180} suffix="°" onChange={(v) => {
                   if (selectedElement) patchElementParams({ rotation: v })
                   else setRotation(v)
                 }} />
-                {!selectedElement && selectedClip && (
+                {selectedElement && (
+                  <button type="button" onClick={() => useEditor.getState().setSelectedElementId(undefined)} className="w-full rounded py-1 text-[9px]" style={{ background: C.stage, color: C.muted, border: `1px solid ${C.border}` }}>
+                    Deselect layer to edit canvas only
+                  </button>
+                )}
+                {selectedClip && (
                   <div className="space-y-2 border-t pt-2" style={{ borderColor: C.border }}>
                     <p className="text-[8px] font-bold uppercase tracking-wider" style={{ color: C.muted }}>Selected clip</p>
                     <Slider label="Clip scale" value={Number(selectedClip.params?.scale ?? 1)} min={0.4} max={2} step={0.05} onChange={(v) => patchClipParams({ scale: v })} />
@@ -1949,7 +2067,7 @@ export default function EditorWorkspace() {
                     className="w-full rounded py-1.5 text-[9px]"
                     style={{ background: C.panel2, color: C.muted, border: `1px solid ${C.border}` }}
                   >
-                    Fine tune in Adjust →
+                    Open full grading in Adjust →
                   </button>
                 </Section>
               </>
@@ -2050,7 +2168,7 @@ export default function EditorWorkspace() {
               <label className="block text-[10px]" style={{ color: C.muted }}>
                 Resolution
                 <select value={resolution} onChange={(e) => setResolution(e.target.value)} className="mt-1 h-7 w-full rounded px-2 text-[11px] outline-none" style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}>
-                  {['720p', '1080p', '1440p', '4K'].map((r) => <option key={r}>{r}</option>)}
+                  {['Project', '720p', '1080p', '1440p', '4K'].map((r) => <option key={r}>{r}</option>)}
                 </select>
               </label>
               <label className="block text-[10px]" style={{ color: C.muted }}>
@@ -2089,7 +2207,7 @@ export default function EditorWorkspace() {
           <div className="w-full max-w-md rounded-xl p-5" style={{ background: C.panel, border: `1px solid ${C.border}` }}>
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm font-bold">Export video</p>
-              <IconButton label="Close export dialog" onClick={() => { if (!exporting) setExportDialogOpen(false) }}><X className="h-3.5 w-3.5" /></IconButton>
+              <button type="button" aria-label="Close export dialog" disabled={exporting} onClick={() => setExportDialogOpen(false)} className="flex h-7 w-7 items-center justify-center rounded-md disabled:opacity-35" style={{ color: C.muted, background: 'transparent', border: `1px solid ${C.border}` }}><X className="h-3.5 w-3.5" /></button>
             </div>
             <label className="mb-3 block text-[10px]" style={{ color: C.muted }}>
               File name
@@ -2111,7 +2229,7 @@ export default function EditorWorkspace() {
               <label className="block text-[10px]" style={{ color: C.muted }}>
                 Resolution
                 <select value={resolution} onChange={(e) => setResolution(e.target.value)} className="mt-1 h-8 w-full rounded px-2 text-[11px] outline-none" style={{ background: C.stage, color: C.text, border: `1px solid ${C.border}` }}>
-                  {['720p', '1080p', '1440p', '4K'].map((r) => <option key={r}>{r}</option>)}
+                  {['Project', '720p', '1080p', '1440p', '4K'].map((r) => <option key={r}>{r}</option>)}
                 </select>
               </label>
               <label className="block text-[10px]" style={{ color: C.muted }}>
@@ -2135,7 +2253,7 @@ export default function EditorWorkspace() {
               </div>
             </div>
             <p className="mt-2 text-[9px] leading-snug" style={{ color: C.muted }}>
-              FFmpeg.wasm renders real media and export-safe effects. Time-based effects and text overlays stay in the live preview only. FFmpeg cannot be safely cancelled once encoding starts.
+              FFmpeg.wasm renders real media, project grading, crop, fades, opacity, export-safe effects and composited text/shape layers. Some time-based effects remain preview-only. FFmpeg cannot be safely cancelled once encoding starts.
             </p>
             <div className="mt-4 flex gap-2">
               <button
@@ -2144,7 +2262,7 @@ export default function EditorWorkspace() {
                 disabled={exporting}
                 className="flex-1 rounded-lg py-2 text-[11px] font-semibold disabled:opacity-40"
                 style={{ background: C.stage, color: C.muted, border: `1px solid ${C.border}` }}
-              >Cancel</button>
+              >Close dialog</button>
               <button
                 type="button"
                 onClick={() => void runExport()}

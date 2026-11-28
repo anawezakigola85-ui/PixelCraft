@@ -93,7 +93,7 @@ export function designToSvgMarkup(
     '</linearGradient>',
     '</defs>',
     options.transparent ? '' : `<rect width="${w}" height="${h}" fill="${esc(design.background || '#090A0F')}"/>`,
-    `<rect width="${w}" height="${h}" fill="url(#${gradientId})"/>`,
+    options.transparent ? '' : `<rect width="${w}" height="${h}" fill="url(#${gradientId})"/>`,
     body,
     '</svg>',
   ].join('')

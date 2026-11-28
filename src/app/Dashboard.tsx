@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Search, Sparkles, Monitor, LayoutGrid, Wand2,
-  Home, Film, Layers, Image as ImageIcon, Megaphone, Scissors,
+  Home, Film, Layers, Image as ImageIcon, Megaphone,
   Clapperboard, Gauge, Mic, Eraser, Video,
 } from 'lucide-react'
 import Logo from '../components/ui/Logo'
@@ -28,6 +28,7 @@ const NAV: Array<{ label: string; icon: typeof Home; path: string }> = [
   { label: 'More tools', icon: Layers, path: '/tools' },
 ]
 
+/** Labels describe the real page each card opens — no imaginary AI products. */
 const AI_CARDS: Array<{
   title: string
   desc: string
@@ -35,19 +36,19 @@ const AI_CARDS: Array<{
   path: string
   color: string
 }> = [
-  { title: 'AI video', desc: 'Set ideas into motion', icon: Video, path: '/tools?tab=video', color: '#8b5cf6' },
-  { title: 'GPT Image 2', desc: 'Turn ideas into imagery', icon: ImageIcon, path: '/ai', color: '#22d3ee' },
-  { title: 'AI ad maker', desc: 'Create winning ads, scale fast with variants', icon: Megaphone, path: '/templates?category=Business', color: '#f59e0b' },
-  { title: 'Extend video', desc: 'Seamlessly extend any clip', icon: Scissors, path: '/tools?tab=video', color: '#ec4899' },
-  { title: 'AI edit', desc: 'Edit clips by describing it', icon: Clapperboard, path: '/workspace', color: '#a371f7' },
-  { title: 'Long video to shorts', desc: 'Turn long videos into polished shorts', icon: Film, path: '/tools?tab=video', color: '#14b8a6' },
-  { title: 'Enhance quality', desc: 'Get sharper results instantly', icon: Gauge, path: '/tools?tab=video', color: '#3b82f6' },
-  { title: 'Text to speech', desc: 'Convert text to speech in various languages', icon: Mic, path: '/tools?tab=audio', color: '#f97316' },
-  { title: 'AI remove', desc: 'Remove anything unwanted', icon: Eraser, path: '/tools?tab=video', color: '#ef4444' },
+  { title: 'Video Tools', desc: 'Trim, convert and enhance real clips', icon: Video, path: '/tools?tab=video', color: '#8b5cf6' },
+  { title: 'AI Image', desc: 'Generate an image from a text prompt', icon: ImageIcon, path: '/ai', color: '#22d3ee' },
+  { title: 'Ad Templates', desc: 'Browse ready-made business designs', icon: Megaphone, path: '/templates?category=Business', color: '#f59e0b' },
+  { title: 'Background Remover', desc: 'Key out a solid colour from video', icon: Eraser, path: '/tools?tab=video', color: '#ec4899' },
+  { title: 'Pro Studio', desc: 'Edit layers and clips on a timeline', icon: Clapperboard, path: '/workspace', color: '#a371f7' },
+  { title: 'Auto Captions', desc: 'Turn a script into timed captions', icon: Film, path: '/tools?tab=audio', color: '#14b8a6' },
+  { title: 'Enhance Video', desc: 'Adjust brightness, contrast and sharpness', icon: Gauge, path: '/tools?tab=video', color: '#3b82f6' },
+  { title: 'Text to Speech', desc: 'Hear your script in a chosen voice', icon: Mic, path: '/tools?tab=audio', color: '#f97316' },
+  { title: 'Image Tools', desc: 'Resize, combine and retouch photos', icon: Layers, path: '/tools?tab=image', color: '#ef4444' },
 ]
 
 export default function Dashboard() {
-  const { projects, current, createProject, renameProject, loadProjects } = useProjects()
+  const { projects, createProject, renameProjectById, loadProjects } = useProjects()
   const { searchQuery, setSearchQuery } = useUI()
   const { session } = useAuth()
   const greetingName = session?.name || session?.email || ''
@@ -59,16 +60,26 @@ export default function Dashboard() {
     void getAllMedia(session?.userId).then((m) => setMediaCount(m.length))
   }, [loadProjects, session?.userId])
 
+  const query = searchQuery.trim().toLowerCase()
   const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return projects
+    if (!query) return projects
     return projects.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.type.toLowerCase().includes(q) ||
-        p.elements.some((e) => e.text?.toLowerCase().includes(q)),
+        p.name.toLowerCase().includes(query) ||
+        p.type.toLowerCase().includes(query) ||
+        p.elements.some((e) => e.text?.toLowerCase().includes(query)),
     )
-  }, [projects, searchQuery])
+  }, [projects, query])
+
+  const filteredTemplates = useMemo(() => {
+    if (!query) return TEMPLATES.slice(0, 3)
+    return TEMPLATES.filter((tp) =>
+      [tp.name, tp.description, tp.category, tp.style, tp.aspectRatio,
+        ...(tp.layoutPreview?.textLines || []),
+        ...tp.elements.map((e) => e.text || '')]
+        .some((value) => value.toLowerCase().includes(query)),
+    )
+  }, [query])
 
   const recent = useMemo(() => [...filtered].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4), [filtered])
   const saved = useMemo(() => [...filtered].sort((a, b) => a.updatedAt - b.updatedAt).slice(4, 16), [filtered])
@@ -89,14 +100,12 @@ export default function Dashboard() {
   const handleOpen = (id: string) => {
     void useProjects.getState().openProject(id).then(() => navigate(`/editor/${id}`))
   }
-  const handleRename = async (project: Project) => {
+  const handleRename = (project: Project) => {
     const next = window.prompt('Rename project:', project.name)
-    if (next && next !== project.name) {
-      await renameProject(next)
-      if (current?.id === project.id) {
-        const updated = useProjects.getState().current
-        if (updated) navigate(`/editor/${updated.id}`)
-      }
+    if (next && next.trim() && next.trim() !== project.name) {
+      void renameProjectById(project.id, next.trim()).catch(() => {
+        window.alert('Could not rename the project. Please try again.')
+      })
     }
   }
 
@@ -240,32 +249,40 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="font-display text-2xl font-semibold">Start from a template</h2>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">Click any design to open a fully editable copy.</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                {query
+                  ? `${filteredTemplates.length} template${filteredTemplates.length === 1 ? '' : 's'} matching “${searchQuery.trim()}”.`
+                  : 'Click any design to open a fully editable copy.'}
+              </p>
             </div>
             <Button variant="secondary" size="sm" onClick={() => navigate('/templates')}>
               View all {TEMPLATES.length} →
             </Button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {TEMPLATES.slice(0, 3).map((tp) => (
-              <button
-                key={tp.id}
-                onClick={() => void applyTemplate(tp)}
-                className="group glass rounded-2xl overflow-hidden text-left hover:border-[var(--color-accent-3)] hover:translate-y-[-2px] transition-all"
-              >
-                <div className="relative h-40 bg-[#090A0F]">
-                  <DesignPreview design={tp} className="absolute inset-0 h-full w-full" />
-                  <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-3 py-1 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
-                    Use →
-                  </span>
-                </div>
-                <div className="p-3 border-t border-[var(--color-border)]">
-                  <p className="text-sm font-medium truncate">{tp.name}</p>
-                  <p className="text-[10px] text-[var(--color-text-muted)] truncate">{tp.style} · {tp.aspectRatio}</p>
-                </div>
-              </button>
-            ))}
-          </div>
+          {filteredTemplates.length === 0 ? (
+            <p className="text-sm text-[var(--color-text-muted)]">No templates match that search. Try a different word.</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {filteredTemplates.map((tp) => (
+                <button
+                  key={tp.id}
+                  onClick={() => void applyTemplate(tp)}
+                  className="group glass rounded-2xl overflow-hidden text-left hover:border-[var(--color-accent-3)] hover:translate-y-[-2px] transition-all"
+                >
+                  <div className="relative h-40 bg-[#090A0F]">
+                    <DesignPreview design={tp} className="absolute inset-0 h-full w-full" />
+                    <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-3 py-1 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+                      Use →
+                    </span>
+                  </div>
+                  <div className="p-3 border-t border-[var(--color-border)]">
+                    <p className="text-sm font-medium truncate">{tp.name}</p>
+                    <p className="text-[10px] text-[var(--color-text-muted)] truncate">{tp.style} · {tp.aspectRatio}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Recent Projects */}
@@ -276,7 +293,7 @@ export default function Dashboard() {
           </div>
           {recent.length === 0 && (
             <p className="text-[var(--color-text-muted)] text-sm">
-              You have no projects yet. Create your first project!
+              {query ? 'No projects match that search.' : 'You have no projects yet. Create your first project!'}
             </p>
           )}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -285,7 +302,7 @@ export default function Dashboard() {
                 key={p.id}
                 project={p}
                 onOpen={() => handleOpen(p.id)}
-                onRename={() => void handleRename(p)}
+                onRename={() => handleRename(p)}
               />
             ))}
           </div>
@@ -301,7 +318,7 @@ export default function Dashboard() {
                   key={p.id}
                   project={p}
                   onOpen={() => handleOpen(p.id)}
-                  onRename={() => void handleRename(p)}
+                  onRename={() => handleRename(p)}
                 />
               ))}
             </div>

@@ -12,12 +12,40 @@ interface Msg {
   text: string
 }
 
+const CHAT_KEY = 'pixelcraft-ai-chat'
+
+function loadChat(): Msg[] {
+  try {
+    const raw = window.sessionStorage.getItem(CHAT_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (m): m is Msg =>
+        !!m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string',
+    )
+  } catch {
+    return []
+  }
+}
+
 export default function AIAssistant() {
-  const [messages, setMessages] = useState<Msg[]>([])
+  // Chat survives Hide/Show and any unmount/remount within the same browser tab.
+  const [messages, setMessages] = useState<Msg[]>(loadChat)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<Msg[]>(messages)
   const { aiProvider, aiModel } = useSettings()
+
+  useEffect(() => {
+    messagesRef.current = messages
+    try {
+      window.sessionStorage.setItem(CHAT_KEY, JSON.stringify(messages))
+    } catch {
+      // Private browsing / full storage: chat still works for this session.
+    }
+  }, [messages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -27,7 +55,9 @@ export default function AIAssistant() {
     const q = text || input.trim()
     if (!q || busy) return
     setInput('')
-    setMessages((m) => [...m, { role: 'user', text: q }])
+    const history: Msg[] = [...messagesRef.current, { role: 'user', text: q }]
+    messagesRef.current = history
+    setMessages(history)
     setBusy(true)
     try {
       const reply = await askAI([
@@ -38,8 +68,7 @@ export default function AIAssistant() {
             'Help users with design ideas, colors, fonts, text, storyboards, transitions, captions and editing suggestions. ' +
             'Answer concisely and practically. Never claim to have edited anything or access user projects unless told.',
         },
-        ...messages.map((m) => ({ role: m.role, content: m.text })),
-        { role: 'user', content: q },
+        ...history.map((m) => ({ role: m.role, content: m.text })),
       ])
       setMessages((m) => [...m, { role: 'assistant', text: reply }])
     } catch (e) {
@@ -57,6 +86,16 @@ export default function AIAssistant() {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
         <Sparkles className="h-4 w-4 text-[var(--color-accent-2)]" />
         <h3 className="font-display font-semibold text-sm">Pixel AI Assistant</h3>
+        <button
+          className="ml-auto text-[10px] text-[var(--color-text-muted)] underline"
+          onClick={() => {
+            messagesRef.current = []
+            setMessages([])
+            try { window.sessionStorage.removeItem(CHAT_KEY) } catch { /* ignore */ }
+          }}
+        >
+          Clear chat
+        </button>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
