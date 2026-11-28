@@ -308,9 +308,11 @@ export default function EditorWorkspace() {
     [],
   )
 
+  // Follow the real timeline. No artificial 30-second floor: an 8-second
+  // video gets an 8-second ruler, and a 2-minute video gets a 2-minute ruler.
   const duration = useMemo(() => {
     const end = clips.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
-    return Math.max(30, Math.ceil(end / 5) * 5 + 5)
+    return clips.length ? Math.max(2, Math.ceil(end + 2)) : 10
   }, [clips])
 
   const effects = project?.effects || {}
@@ -997,7 +999,9 @@ export default function EditorWorkspace() {
     void addAsset(asset, { start, trackId })
   }
 
-  const rulerTicks = Array.from({ length: Math.floor(duration / 5) + 1 }, (_, i) => i * 5)
+  const tickStep = duration <= 15 ? 1 : duration <= 60 ? 5 : duration <= 180 ? 10 : 30
+  const rulerTicks = Array.from({ length: Math.floor(duration / tickStep) + 1 }, (_, i) => i * tickStep)
+  const gridSize = tickStep * pxPerSecond
   const stageScale = selectedElement ? 1 : scale * previewZoom
   const stageRotation = selectedElement ? 0 : rotation
   const stageOpacity = selectedElement ? 1 : opacity
@@ -1502,11 +1506,18 @@ export default function EditorWorkspace() {
               </div>
 
               {/* Ruler + tracks */}
-              <div className="relative min-w-0 flex-1 overflow-x-auto" style={{ backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px)', backgroundSize: `${58 * zoom}px 100%` }}>
-                <div className="relative" style={{ width: Math.max(duration * pxPerSecond, 640) }}>
+              <div className="relative min-w-0 flex-1 overflow-x-auto">
+                <div
+                  className="relative"
+                  style={{
+                    width: Math.max(duration * pxPerSecond, 240),
+                    backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px)',
+                    backgroundSize: `${gridSize}px 100%`,
+                  }}
+                >
                   <div className="relative h-6" style={{ borderBottom: `1px solid ${C.border}` }} onClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect()
-                    useEditor.getState().setTime(((e.clientX - rect.left) / rect.width) * duration)
+                    useEditor.getState().setTime(Math.min(duration, Math.max(0, (e.clientX - rect.left) / pxPerSecond)))
                   }}>
                     {rulerTicks.map((tick) => (
                       <span key={tick} className="absolute top-1 text-[9px] tabular-nums" style={{ left: tick * pxPerSecond, color: C.muted }}>{fmtTime(tick)}</span>
