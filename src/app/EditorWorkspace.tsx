@@ -39,7 +39,7 @@ const C = {
   muted: '#7E8497',
 } as const
 
-type RailPanel = 'media' | 'templates' | 'audio' | 'text' | 'elements' | 'transitions' | 'effects' | 'brand'
+type RailPanel = 'media' | 'templates' | 'audio' | 'music' | 'text' | 'elements' | 'transitions' | 'effects' | 'brand'
 type InspectorTab = 'Video' | 'Speed' | 'Animation' | 'Adjust' | 'AI Stylize'
 type AssetKind = 'image' | 'video' | 'audio' | 'template' | 'text' | 'shape' | 'transition'
 
@@ -68,12 +68,52 @@ interface Asset {
   }
   shape?: 'rect' | 'circle' | 'line'
   transition?: string
+  /** Attribution shown for Creative Commons / public-domain music tracks. */
+  credit?: string
+  license?: string
+  sourceUrl?: string
+  duration?: number
+}
+
+type CommonsMetadata = Record<string, { value?: string }>
+type CommonsPage = {
+  pageid?: number
+  title?: string
+  index?: number
+  imageinfo?: Array<{
+    url?: string
+    descriptionurl?: string
+    duration?: number
+    mime?: string
+    extmetadata?: CommonsMetadata
+  }>
+}
+type CommonsResponse = {
+  query?: { pages?: Record<string, CommonsPage> }
+  continue?: { gsroffset?: number; continue?: string }
+}
+
+const MUSIC_GENRES = [
+  'ambient music', 'cinematic music', 'lo-fi music', 'hip hop instrumental',
+  'jazz music', 'afrobeat music', 'pop instrumental', 'rock instrumental',
+  'classical music', 'electronic music',
+]
+
+const stripCommonsHtml = (value?: string) =>
+  value
+    ? value.replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim()
+    : ''
+
+const formatTrackDuration = (seconds?: number) => {
+  if (!seconds || !Number.isFinite(seconds)) return ''
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 }
 
 const RAIL: Array<{ id: RailPanel; label: string; icon: ReactNode }> = [
   { id: 'media', label: 'Media', icon: <Video className="h-4 w-4" /> },
   { id: 'templates', label: 'Templates', icon: <LayoutGrid className="h-4 w-4" /> },
   { id: 'audio', label: 'Audio', icon: <Music2 className="h-4 w-4" /> },
+  { id: 'music', label: 'Music', icon: <Music2 className="h-4 w-4" /> },
   { id: 'text', label: 'Text', icon: <Type className="h-4 w-4" /> },
   { id: 'elements', label: 'Elements', icon: <Shapes className="h-4 w-4" /> },
   { id: 'transitions', label: 'Transitions', icon: <Sparkles className="h-4 w-4" /> },
@@ -284,10 +324,16 @@ export default function EditorWorkspace() {
   const [history, setHistory] = useState<EditorSnapshot[]>([])
   const [future, setFuture] = useState<EditorSnapshot[]>([])
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({})
+  const [musicTracks, setMusicTracks] = useState<Asset[]>([])
+  const [musicLoading, setMusicLoading] = useState(false)
+  const [musicNext, setMusicNext] = useState<CommonsResponse['continue'] | null>(null)
+  const [musicPreviewId, setMusicPreviewId] = useState<string | undefined>()
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const musicPreviewRef = useRef<HTMLAudioElement | null>(null)
+  const musicRequestRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const dragRef = useRef<{
     id: string
@@ -409,6 +455,112 @@ export default function EditorWorkspace() {
     })
     setMedia(uploads)
   }, [session?.userId])
+
+  // Real global music library. Wikimedia Commons hosts Creative Commons and
+  // public-domain audio and allows browser CORS, so no API key or secret is
+  // needed. Commercial chart music is deliberately excluded (copyright).
+  const searchMusic = useCallback(async (
+    term: string,
+    reset = true,
+    continuation?: CommonsResponse['continue'] | null,
+  ) => {
+    const requestId = ++musicRequestRef.current
+    setMusicLoading(true)
+    if (reset) {
+      setMusicTracks([])
+      setMusicNext(null)
+    }
+    try {
+      const params = new URLSearchParams({
+        action: 'query',
+        generator: 'search',
+        gsrsearch: `filemime:audio/mpeg ${term.trim() || 'music'}`,
+        gsrnamespace: '6',
+        gsrlimit: '18',
+        prop: 'imageinfo',
+        iiprop: 'url|size|extmetadata|mime',
+        format: 'json',
+        origin: '*',
+      })
+      if (!reset && continuation?.gsroffset != null) {
+        params.set('gsroffset', String(continuation.gsroffset))
+        if (continuation.continue) params.set('continue', continuation.continue)
+      }
+      const res = await fetch(`https://commons.wikimedia.org/w/api.php?${params.toString()}`)
+      if (!res.ok) throw new Error(`music catalogue returned ${res.status}`)
+      const data = await res.json() as CommonsResponse
+      if (requestId !== musicRequestRef.current) return
+      const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      const found = pages.flatMap((page) => {
+        const info = page.imageinfo?.[0]
+        if (!info?.url || info.mime !== 'audio/mpeg') return []
+        const meta = info.extmetadata || {}
+        const rawTitle = stripCommonsHtml(meta.ObjectName?.value) || page.title?.replace(/^File:/, '').replace(/\.mp3$/i, '') || 'Music track'
+        const credit = stripCommonsHtml(meta.Attribution?.value || meta.Artist?.value) || stripCommonsHtml(meta.Credit?.value) || 'Wikimedia Commons'
+        const license = stripCommonsHtml(meta.LicenseShortName?.value || meta.UsageTerms?.value) || 'See source'
+        const name = credit && !rawTitle.toLowerCase().includes(credit.toLowerCase())
+          ? `${rawTitle} — ${credit}`
+          : rawTitle
+        return [{
+          id: `music-${page.pageid ?? rawTitle}`,
+          name,
+          kind: 'audio' as AssetKind,
+          label: 'MUSIC',
+          src: info.url.split('?')[0],
+          gradient: 'linear-gradient(135deg,#4c1d95,#0e7490)',
+          credit,
+          license,
+          sourceUrl: info.descriptionurl,
+          duration: Number(info.duration || 0),
+        }]
+      })
+      setMusicTracks((prev) => reset ? found : [...prev, ...found])
+      setMusicNext(data.continue || null)
+      setStatus(found.length
+        ? `${found.length} ${reset ? '' : 'more '}music track(s) loaded from Wikimedia Commons`
+        : 'No matching music found — try another style or genre')
+    } catch (error) {
+      if (requestId === musicRequestRef.current) {
+        setStatus(`Music search failed: ${(error as Error).message}`)
+      }
+    } finally {
+      if (requestId === musicRequestRef.current) setMusicLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (rail !== 'music') return
+    const timer = window.setTimeout(() => {
+      void searchMusic(query.trim() || 'ambient music', true)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [rail, query, searchMusic])
+
+  useEffect(() => () => musicPreviewRef.current?.pause(), [])
+
+  useEffect(() => {
+    if (rail !== 'music') {
+      musicPreviewRef.current?.pause()
+      setMusicPreviewId(undefined)
+    }
+  }, [rail])
+
+  const toggleMusicPreview = (track: Asset) => {
+    const audio = musicPreviewRef.current
+    if (!audio || !track.src) return
+    if (musicPreviewId === track.id && !audio.paused) {
+      audio.pause()
+      setMusicPreviewId(undefined)
+      setStatus('Music preview paused')
+      return
+    }
+    audio.src = track.src
+    audio.currentTime = 0
+    setMusicPreviewId(track.id)
+    void audio.play()
+      .then(() => setStatus(`Previewing: ${track.name}`))
+      .catch(() => setStatus('Browser blocked audio preview — press Play on the card again'))
+  }
 
   // The inspector persists through updateCurrent(), which no-ops without a
   // current project. Opening /workspace directly must therefore create or
@@ -1010,12 +1162,13 @@ export default function EditorWorkspace() {
     media,
     templates: templateAssets,
     audio: media.filter((a) => a.kind === 'audio'),
+    music: musicTracks,
     text: TEXT_PRESETS,
     elements: SHAPE_PRESETS,
     transitions: TRANSITION_PRESETS,
     effects: [],
     brand: [],
-  }), [media, templateAssets])
+  }), [media, templateAssets, musicTracks])
 
   const visibleAssets = assetsByPanel[rail].filter((a) => {
     if (showAssetFavoritesOnly && !favorites.has(a.id)) return false
@@ -1497,6 +1650,108 @@ export default function EditorWorkspace() {
                 <p className="text-[9px] leading-snug" style={{ color: C.muted }}>
                   Select a clip on the timeline first, then click an effect to apply it.
                 </p>
+              </div>
+            ) : rail === 'music' ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-[11px] font-semibold" style={{ color: C.text }}>Free music library</p>
+                  <p className="mt-1 text-[9px] leading-snug" style={{ color: C.muted }}>
+                    Real Creative Commons &amp; public-domain tracks from Wikimedia Commons. Give credit when you publish. Commercial chart songs are not included because they are copyrighted.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {MUSIC_GENRES.map((genre) => (
+                    <button
+                      key={genre}
+                      type="button"
+                      onClick={() => setQuery(genre)}
+                      className="rounded-full px-2 py-1 text-[8px] transition"
+                      style={{
+                        background: query.trim().toLowerCase() === genre ? `${C.purple}44` : C.stage,
+                        color: query.trim().toLowerCase() === genre ? C.cyan : C.muted,
+                        border: `1px solid ${query.trim().toLowerCase() === genre ? C.purple : C.border}`,
+                      }}
+                      title={`Search ${genre}`}
+                    >
+                      {genre.replace(' instrumental', '')}
+                    </button>
+                  ))}
+                </div>
+                {musicLoading && <p className="text-[9px]" style={{ color: C.cyan }}>Searching the music catalogue…</p>}
+                {visibleAssets.length ? (
+                  <div className="space-y-2">
+                    {visibleAssets.map((track) => (
+                      <div key={track.id} className="rounded-lg p-2" style={{ background: C.stage, border: `1px solid ${C.border}` }}>
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleMusicPreview(track)}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black"
+                            style={{ background: `linear-gradient(135deg, ${C.purple}, ${C.cyan})` }}
+                            title={musicPreviewId === track.id ? 'Pause preview' : `Preview ${track.name}`}
+                          >
+                            {musicPreviewId === track.id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[10px]" style={{ color: C.text }} title={track.name}>{track.name}</p>
+                            <p className="text-[8px]" style={{ color: C.muted }}>
+                              {track.license}{formatTrackDuration(track.duration) ? ` · ${formatTrackDuration(track.duration)}` : ''}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleFavorite(track.id)}
+                            className="rounded p-1"
+                            style={{ background: 'transparent', color: favorites.has(track.id) ? '#fbbf24' : C.muted }}
+                            title={favorites.has(track.id) ? 'Remove favourite' : 'Add favourite'}
+                          >
+                            <Star className="h-3 w-3" fill={favorites.has(track.id) ? 'currentColor' : 'none'} />
+                          </button>
+                        </div>
+                        <div className="mt-2 flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void addAsset(track)}
+                            className="flex-1 rounded py-1 text-[9px] font-semibold"
+                            style={{ background: `${C.purple}33`, color: C.cyan, border: `1px solid ${C.purple}` }}
+                            title={`Add ${track.name} to the timeline`}
+                          >
+                            Add to timeline
+                          </button>
+                          {track.sourceUrl && (
+                            <a
+                              href={track.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded px-2 py-1 text-[8px]"
+                              style={{ background: C.panel2, color: C.muted, border: `1px solid ${C.border}` }}
+                              title="Open the licence and artist page"
+                            >
+                              Source
+                            </a>
+                          )}
+                        </div>
+                        {track.credit && <p className="mt-1 truncate text-[8px]" style={{ color: C.muted }}>Credit: {track.credit}</p>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-6 text-center text-[10px]" style={{ color: C.muted }}>
+                    {musicLoading ? 'Loading tracks…' : 'No tracks found. Try another genre or search word.'}
+                  </p>
+                )}
+                {musicNext && (
+                  <button
+                    type="button"
+                    onClick={() => void searchMusic(query.trim() || 'ambient music', false, musicNext)}
+                    disabled={musicLoading}
+                    className="w-full rounded py-1.5 text-[10px] disabled:opacity-40"
+                    style={{ background: C.panel2, color: C.cyan, border: `1px solid ${C.border}` }}
+                  >
+                    Load more music
+                  </button>
+                )}
+                <audio ref={musicPreviewRef} preload="none" onEnded={() => setMusicPreviewId(undefined)} />
               </div>
             ) : visibleAssets.length ? (
               <div className="grid grid-cols-2 gap-2">

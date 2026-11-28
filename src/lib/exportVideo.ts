@@ -68,6 +68,35 @@ function cssFilterToFfmpeg(filter?: string): string[] {
 
 const GAP_PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
+/** Real audio needs a real container name; reusing .mp4 for MP3 broke exports. */
+function isAudioClipSrc(src?: string): boolean {
+  if (!src) return false
+  const lower = src.toLowerCase()
+  if (lower.startsWith('data:audio/')) return true
+  const clean = lower.split('?')[0]
+  return /\.(mp3|ogg|wav|m4a|aac|flac)$/.test(clean)
+}
+
+function clipExtension(src: string): string {
+  const lower = src.toLowerCase()
+  if (lower.startsWith('data:image')) return 'png'
+  const dataMime = lower.match(/^data:([^;,]+)/)?.[1]
+  if (dataMime) {
+    if (dataMime === 'audio/mpeg' || dataMime === 'audio/mp3') return 'mp3'
+    if (dataMime === 'audio/ogg') return 'ogg'
+    if (dataMime === 'audio/wav' || dataMime === 'audio/x-wav') return 'wav'
+    if (dataMime === 'audio/mp4' || dataMime === 'audio/x-m4a' || dataMime === 'audio/aac') return 'm4a'
+    if (dataMime.startsWith('video/')) return 'mp4'
+  }
+  const clean = lower.split('?')[0]
+  if (/\.ogg$/.test(clean)) return 'ogg'
+  if (/\.mp3$/.test(clean)) return 'mp3'
+  if (/\.wav$/.test(clean)) return 'wav'
+  if (/\.m4a$/.test(clean) || /\.aac$/.test(clean)) return 'm4a'
+  if (/\.(png|jpe?g|webp|gif)$/.test(clean)) return 'png'
+  return 'mp4'
+}
+
 export async function exportVideo({
   project,
   format = 'MP4',
@@ -93,34 +122,51 @@ export async function exportVideo({
     onProgress?.('Loading video engine…', 5)
     const f = await loadFFmpeg()
     // SVG thumbnails are UI-only; never send them to the video encoder.
-    const clips = [...(project.clips || [])]
+    const allClips = [...(project.clips || [])]
       .sort((a, b) => a.start - b.start)
       .filter((c) => c.src && !c.src.startsWith('data:image/svg+xml'))
-    if (clips.length === 0) {
-      onProgress?.('No decodable video or image clips on the timeline.')
+    const visualClips = allClips.filter((c) => !isAudioClipSrc(c.src))
+    const audioClips = allClips.filter((c) => isAudioClipSrc(c.src))
+    const total = Math.max(1, ...allClips.map((c) => c.start + c.duration))
+    if (!visualClips.length && !audioClips.length) {
+      onProgress?.('No decodable video, image or music clips on the timeline.')
       return null
     }
 
-    const names: string[] = []
-    for (let i = 0; i < clips.length; i += 1) {
-      const ext = clips[i].src?.includes('data:image') ? 'png' : 'mp4'
-      const name = `clip-${i}.${ext}`
-      onProgress?.(`Preparing clip ${i + 1} of ${clips.length}…`, 5 + Math.round(((i + 1) / clips.length) * 50))
-      const res = await fetch(clips[i].src as string)
-      if (!res.ok) throw new Error(`could not read clip ${i + 1}`)
+    const visualNames: string[] = []
+    for (let i = 0; i < visualClips.length; i += 1) {
+      const name = `visual-${i}.${clipExtension(visualClips[i].src as string)}`
+      onProgress?.(`Preparing clip ${i + 1} of ${visualClips.length}…`, 5 + Math.round(((i + 1) / Math.max(1, allClips.length)) * 40))
+      const res = await fetch(visualClips[i].src as string)
+      if (!res.ok) throw new Error(`could not read visual clip ${i + 1}`)
       await f.writeFile(name, new Uint8Array(await res.arrayBuffer()))
       written.push(name)
-      names.push(name)
+      visualNames.push(name)
+    }
+
+    const audioNames: string[] = []
+    for (let i = 0; i < audioClips.length; i += 1) {
+      const name = `music-${i}.${clipExtension(audioClips[i].src as string)}`
+      onProgress?.(`Preparing music ${i + 1} of ${audioClips.length}…`, 25 + Math.round(((i + 1) / Math.max(1, audioClips.length)) * 20))
+      const res = await fetch(audioClips[i].src as string)
+      if (!res.ok) throw new Error(`could not read music ${i + 1}`)
+      await f.writeFile(name, new Uint8Array(await res.arrayBuffer()))
+      written.push(name)
+      audioNames.push(name)
     }
 
     // Honour timeline positions and clip durations, including empty gaps.
     const lines: string[] = []
-    let cursor = 0
-    for (let i = 0; i < clips.length; i += 1) {
-      const gap = Math.max(0, clips[i].start - cursor)
-      if (gap > 0.05) lines.push("file 'gap.png'", `duration ${gap.toFixed(3)}`)
-      lines.push(`file '${names[i]}'`, `duration ${Math.max(0.05, clips[i].duration).toFixed(3)}`)
-      cursor = Math.max(cursor, clips[i].start + clips[i].duration)
+    if (!visualClips.length) {
+      lines.push("file 'gap.png'", `duration ${total.toFixed(3)}`)
+    } else {
+      let cursor = 0
+      for (let i = 0; i < visualClips.length; i += 1) {
+        const gap = Math.max(0, visualClips[i].start - cursor)
+        if (gap > 0.05) lines.push("file 'gap.png'", `duration ${gap.toFixed(3)}`)
+        lines.push(`file '${visualNames[i]}'`, `duration ${Math.max(0.05, visualClips[i].duration).toFixed(3)}`)
+        cursor = Math.max(cursor, visualClips[i].start + visualClips[i].duration)
+      }
     }
     lines.push("file 'gap.png'")
     const gapBytes = await fetch(GAP_PIXEL).then((r) => r.arrayBuffer())
@@ -137,12 +183,14 @@ export async function exportVideo({
       : `fps=${fps},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`
 
     const preFilters: string[] = []
-    const rates = clips.map((c) => Math.max(0.25, Math.min(4, Number(c.params?.rate ?? c.rate ?? 1))))
-    const avgRate = rates.reduce((sum, r) => sum + r, 0) / Math.max(1, rates.length)
+    const rates = visualClips.map((c) => Math.max(0.25, Math.min(4, Number(c.params?.rate ?? c.rate ?? 1))))
+    const avgRate = visualClips.length
+      ? rates.reduce((sum, r) => sum + r, 0) / visualClips.length
+      : 1
     if (Math.abs(avgRate - 1) > 0.01) preFilters.push(`setpts=PTS/${avgRate.toFixed(3)}`)
     let cw = w
     let ch = h
-    const cropClip = clips.find((c) => c.params?.mask || c.params?.cropTop || c.params?.cropRight || c.params?.cropBottom || c.params?.cropLeft)
+    const cropClip = visualClips.find((c) => c.params?.mask || c.params?.cropTop || c.params?.cropRight || c.params?.cropBottom || c.params?.cropLeft)
     if (cropClip) {
       const pad = cropClip.params?.mask ? 6 : 0
       const top = pad + Number(cropClip.params?.cropTop || 0)
@@ -156,7 +204,7 @@ export async function exportVideo({
     }
 
     // Export-safe clip effects plus the project's global look/grading.
-    const fx = clips.flatMap((c) =>
+    const fx = visualClips.flatMap((c) =>
       effectsToFfmpeg(c.params?.effects as ClipEffect[] | undefined, c.duration),
     ).filter((filter, index, all) => all.indexOf(filter) === index)
     const look = cssFilterToFfmpeg(project.effects?.filter)
@@ -169,10 +217,11 @@ export async function exportVideo({
     if (saturation !== 1) eq.push(`saturation=${saturation.toFixed(3)}`)
     if (eq.length) look.push(`eq=${eq.join(':')}`)
 
-    const total = clips.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
-    const fadeIn = Math.max(0, ...clips.map((c) => Number(c.params?.fadeIn || 0)))
-    const fadeOut = Math.max(0, ...clips.map((c) => Number(c.params?.fadeOut || 0)))
-    const opacity = Math.min(1, ...clips.map((c) => Number(c.params?.opacity ?? 1)))
+    const fadeIn = Math.max(0, ...visualClips.map((c) => Number(c.params?.fadeIn || 0)))
+    const fadeOut = Math.max(0, ...visualClips.map((c) => Number(c.params?.fadeOut || 0)))
+    const opacity = visualClips.length
+      ? Math.min(1, ...visualClips.map((c) => Number(c.params?.opacity ?? 1)))
+      : 1
     const postFilters: string[] = []
     if (fadeIn > 0) postFilters.push(`fade=t=in:st=0:d=${Math.min(total || 1, fadeIn).toFixed(3)}`)
     if (opacity < 1) postFilters.push(`format=rgba,colorchannelmixer=aa=${Math.max(0, opacity).toFixed(3)},format=yuv420p`)
@@ -180,31 +229,50 @@ export async function exportVideo({
 
     const videoChain = [...preFilters, base, ...fx, ...look, ...postFilters].join(',')
     const args = ['-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt']
+    for (const name of audioNames) args.push('-i', name)
+
+    const filterParts: string[] = []
     if (overlayPng) {
       const bytes = await fetch(overlayPng).then((r) => r.arrayBuffer())
       await f.writeFile('overlay.png', new Uint8Array(bytes as ArrayBuffer))
       written.push('overlay.png')
-      args.push('-i', 'overlay.png')
-      args.push(
-        '-filter_complex',
-        `[0:v]${videoChain}[v0];[1:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=rgba[ov];[v0][ov]overlay=0:0:format=auto[v]`,
-        '-map', '[v]',
-      )
+      const overlayInput = audioNames.length + 1
+      filterParts.push(`[0:v]${videoChain}[v0]`)
+      filterParts.push(`[${overlayInput}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=rgba[ov]`)
+      filterParts.push('[v0][ov]overlay=0:0:format=auto[v]')
     } else {
-      args.push('-vf', videoChain)
+      filterParts.push(`[0:v]${videoChain}[v]`)
     }
+
+    const hasAudio = audioNames.length > 0 && volume > 0.001
+    if (hasAudio) {
+      const audioFilterParts = audioClips.map((c, i) => {
+        const clipGain = c.params?.muted ? 0 : Number(c.params?.volume ?? 1)
+        const gain = Math.max(0, Math.min(1, volume * clipGain))
+        const delayMs = Math.round(Math.max(0, c.start) * 1000)
+        const dur = Math.max(0.05, c.duration)
+        return `[${i + 1}:a]atrim=0:${dur.toFixed(3)},asetpts=PTS-STARTPTS,adelay=${delayMs}:all=1,volume=${gain.toFixed(3)}[a${i}]`
+      })
+      filterParts.push(...audioFilterParts)
+      filterParts.push(
+        `${audioClips.map((_, i) => `[a${i}]`).join('')}amix=inputs=${audioClips.length}:duration=longest:normalize=0,apad,atrim=0:${total.toFixed(3)}[a]`,
+      )
+    }
+
+    args.push('-filter_complex', filterParts.join(';'))
+    args.push('-map', '[v]')
+    if (hasAudio) args.push('-map', '[a]')
+    else args.push('-an')
+
     if (format === 'GIF') args.push('-loop', '0')
-    if (format !== 'GIF') {
-      const audioClips = clips.filter((c) => c.src?.startsWith('data:audio'))
-      const clipGain = audioClips.length
-        ? Math.min(1, ...audioClips.map((c) => c.params?.muted ? 0 : Number(c.params?.volume ?? 1)))
-        : 1
-      const audioGain = Math.max(0, Math.min(1, volume * clipGain))
-      if (audioGain <= 0.001) args.push('-an')
-      else args.push('-af', `volume=${audioGain.toFixed(3)}`)
+    if (format === 'WebM') {
+      args.push('-c:v', 'libvpx', '-b:v', '2M', '-crf', String(crf), '-pix_fmt', 'yuv420p')
+      if (hasAudio) args.push('-c:a', 'libopus', '-b:a', '128k')
     }
-    if (format === 'WebM') args.push('-c:v', 'libvpx', '-b:v', '2M', '-crf', String(crf), '-pix_fmt', 'yuv420p')
-    if (format === 'MP4') args.push('-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-crf', String(crf))
+    if (format === 'MP4') {
+      args.push('-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-crf', String(crf))
+      if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k')
+    }
     args.push(outName)
 
     onProgress?.(`Encoding ${format} at ${resolution} / ${fps} fps…`, 65)
